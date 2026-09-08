@@ -1,0 +1,71 @@
+name: ci
+
+# Android SDK の検査。見るのは 2 つ。
+#
+#   - test: Android の言語水準である Java 11 で `mvn verify` が通ること。契約テスト
+#           （EnvelopeContractTest）と AndroidCompatibilityTest もここで走る。spec/ の
+#           vendoring したコピーを読むだけなので network は要らない。18 は「現行の
+#           LTS 手前で挙動が変わりやすい版」の任意の確認で、branch 保護の required
+#           check にするのは Java 11 の方
+#   - spec: 取り込んだ公開契約が配信元から動いていないこと
+#
+# 移設元は Accel-Hack/monica の .github/workflows/ci.yml にあった java-sdk-runtime。
+# reactor ではなく単独の pom.xml になったので `-f sdk/java/pom.xml` を落としている。
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # 公開契約は MONICA 側の都合で動く。PR が来るまで気付かないと、
+    # 気付いたときには「無関係な PR が落ちる」形で出てくる。
+    - cron: "41 21 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Java ${{ matrix.java }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        java: ["11", "18"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+          cache-dependency-path: pom.xml
+
+      - name: 取り込んだ specが lockと一致するか
+        # 契約テストも同じ照合をするが、こちらの方が落ちた理由が読みやすい。
+        run: python3 scripts/spec-sync.py --check
+
+      - run: mvn --batch-mode --no-transfer-progress verify
+
+  spec:
+    # 配信元を叩くので matrix から外してある。network の失敗で Java 2 版の
+    # job が道連れになると、落ちた理由が読めなくなる。
+    name: 公開契約
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: 取り込んだ specが配信元と一致するか
+        # spec/ は https://spec.monica.accelhack.net/v1/ のコピー。配信元の
+        # index.json の revision を取り込み済みのものと比べるだけなので安い。
+        # ここが落ちたら python3 scripts/spec-sync.py で取り込み直し、
+        # mvn verify を通してから commit する。
+        run: python3 scripts/spec-sync.py --check-remote

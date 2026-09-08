@@ -1,0 +1,81 @@
+name: Maven release
+
+# pom.xml を X.Y.Z-SNAPSHOT へ更新して main へ merge した後、
+# android-vX.Y.Z tag をその commit へ付けると Maven Central へ公開する。
+#
+# 移設元は Accel-Hack/monica の .github/workflows/maven-release.yml。変えたのは
+# repository 名、単独 pom.xml になったことによる `-f sdk/java/pom.xml` と
+# `-DprocessAllModules` の削除、そして tag の prefix。monica-sdk-java は
+# `maven-v*` を使うので、同じ prefix だと通知や検索で 2 つの公開が区別できない。
+on:
+  push:
+    tags:
+      - "android-v*"
+
+concurrency:
+  group: maven-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: monica-androidをMaven Centralへ公開
+    # fork で tag を打っても走らないように。secret は元々渡らないが、落ちた理由が読める方がよい。
+    if: github.repository == 'Accel-Hack/monica-sdk-android'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "11"
+          cache: maven
+          cache-dependency-path: pom.xml
+          # setup-java v5 では credential 値ではなく、deploy step で設定する
+          # environment variable 名を以下の input へ渡す。
+          server-id: central
+          server-username: MAVEN_CENTRAL_USERNAME
+          server-password: MAVEN_CENTRAL_TOKEN
+          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: tag・main・POM versionを検証
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::release tag は main に含まれる commit へ付けてください。"
+            exit 1
+          }
+
+          tag_version="${GITHUB_REF_NAME#android-v}"
+          if [[ ! "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tag は android-vX.Y.Z 形式にしてください。"
+            exit 1
+          fi
+          pom_version=$(mvn --batch-mode --no-transfer-progress \
+            help:evaluate -Dexpression=project.version -q -DforceStdout)
+          if [[ "$pom_version" != "$tag_version-SNAPSHOT" ]]; then
+            echo "::error::tag=$tag_version POM=$pom_version。POM を $tag_version-SNAPSHOT へ更新してください。"
+            exit 1
+          fi
+
+          mvn --batch-mode --no-transfer-progress \
+            org.codehaus.mojo:versions-maven-plugin:2.21.0:set \
+            -DnewVersion="$tag_version" -DgenerateBackupPoms=false
+
+      - name: 署名してMaven Centralへ公開
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          -Pcentral-release deploy
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
