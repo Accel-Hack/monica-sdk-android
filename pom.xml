@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    A single-artifact project. monica-android used to be a module of the monica-java-sdk
+    reactor and inherited everything below from that parent; this repository is its own
+    root now (DEC52), so the settings live here.
+  -->
+  <groupId>com.accelhack.monica</groupId>
+  <artifactId>monica-android</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+  <name>MONICA Android</name>
+  <description>Android integration for the MONICA Java SDK</description>
+  <url>https://github.com/Accel-Hack/monica-sdk-android</url>
+
+  <developers>
+    <developer>
+      <name>Accel Hack</name>
+      <organization>Accel Hack</organization>
+      <organizationUrl>https://github.com/Accel-Hack</organizationUrl>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/Accel-Hack/monica-sdk-android.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/Accel-Hack/monica-sdk-android.git</developerConnection>
+    <url>https://github.com/Accel-Hack/monica-sdk-android</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- Android's language level. D8 has accepted Java 11 bytecode since AGP 4.2. -->
+    <maven.compiler.release>11</maven.compiler.release>
+    <!--
+      The published monica-core this integration is built against. It is not the reactor
+      version any more: monica-core is released from Accel-Hack/monica-sdk-java, so a fix
+      there has to be published before it can be verified here.
+    -->
+    <monica-core.version>0.1.1</monica-core.version>
+    <junit.version>5.9.3</junit.version>
+    <!--
+      Compile-only Android framework stubs. Every method throws at runtime, so the real
+      framework on the device always wins.
+    -->
+    <android-stub.version>4.1.1.4</android-stub.version>
+    <!--
+      The JDK API surface of the lowest Android release monica-android supports. javac
+      with release 11 happily accepts List.of() or String.strip(), which only exist on
+      API 30 / 35; animal-sniffer fails the build for what API 26 cannot resolve.
+    -->
+    <android-api.signature>gummy-bears-api-26</android-api.signature>
+    <android-api.signature.version>0.12.0</android-api.signature.version>
+    <project.build.outputTimestamp>2026-08-30T00:00:00Z</project.build.outputTimestamp>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.accelhack.monica</groupId>
+      <artifactId>monica-core</artifactId>
+      <version>${monica-core.version}</version>
+    </dependency>
+    <!--
+      The stub jar carries no java.* or org.* classes, so it cannot shadow the JDK on the
+      compile classpath, and its own dependencies are excluded to keep that classpath to
+      the framework alone.
+    -->
+    <dependency>
+      <groupId>com.google.android</groupId>
+      <artifactId>android</artifactId>
+      <version>${android-stub.version}</version>
+      <scope>provided</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>commons-logging</groupId>
+          <artifactId>commons-logging</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.apache.httpcomponents</groupId>
+          <artifactId>httpclient</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.khronos</groupId>
+          <artifactId>opengl-api</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>xerces</groupId>
+          <artifactId>xmlParserAPIs</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>xpp3</groupId>
+          <artifactId>xpp3</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>org.json</groupId>
+          <artifactId>json</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <release>${maven.compiler.release}</release>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+        <configuration>
+          <useModulePath>false</useModulePath>
+          <systemPropertyVariables>
+            <!-- EnvelopeContractTest checks sdk.version on the wire against this. -->
+            <monica.project.version>${project.version}</monica.project.version>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <!-- Fails the build on any JDK API that API 26 does not have. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>animal-sniffer-maven-plugin</artifactId>
+        <version>1.24</version>
+        <configuration>
+          <signature>
+            <groupId>com.toasttab.android</groupId>
+            <artifactId>${android-api.signature}</artifactId>
+            <version>${android-api.signature.version}</version>
+          </signature>
+        </configuration>
+        <executions>
+          <execution>
+            <id>android-api-level</id>
+            <phase>process-classes</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <!-- Source and Javadoc jars are Maven Central publishing requirements. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.4.0</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.12.0</version>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <phase>package</phase>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Signing and upload; only maven-release.yml activates this. -->
+    <profile>
+      <id>central-release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.8</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <configuration>
+                  <bestPractices>true</bestPractices>
+                  <gpgArguments>
+                    <arg>--pinentry-mode</arg>
+                    <arg>loopback</arg>
+                  </gpgArguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>0.9.0</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+              <autoPublish>true</autoPublish>
+              <checksums>all</checksums>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
