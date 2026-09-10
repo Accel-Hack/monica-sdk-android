@@ -442,8 +442,27 @@ class HttpUrlConnectionTransportTest {
     assertEquals(1, requests.size(), "nothing may be posted after a 401");
     assertEquals(1, diagnostics.size(), "the stop is reported once, not per dropped envelope");
     assertTrue(diagnostics.get(0).stopped());
-    assertTrue(diagnostics.get(0).describe().contains("no further envelopes will be sent"),
-        diagnostics.get(0).describe());
+    // The code is "unknown" even though the stub sent one, and that is the JDK, not this
+    // transport: with setFixedLengthStreamingMode its HttpURLConnection withholds the
+    // error stream for exactly 401 and 407, the two statuses its authentication retry
+    // owns. 400 and 422 are unaffected, which is what matters — a 401 carries no issues.
+    // Android's HttpURLConnection is OkHttp-backed and does hand the body over, so on a
+    // device the real code can appear here; the wording has to hold either way.
+    assertEquals("monica: ingest rejected the envelope with 401 (unknown);"
+        + " no further envelopes will be sent", diagnostics.get(0).describe());
+  }
+
+  @Test
+  void wordsAStopTheSameWayWhicheverEndTheCodeCameFrom() {
+    // No issue count: a refused key is not about a field. Both branches are pinned here
+    // rather than over HTTP, because which one a 401 takes depends on the platform.
+    assertEquals("monica: ingest rejected the envelope with 401 (unauthorized);"
+        + " no further envelopes will be sent",
+        new MonicaDiagnostic(401, "unauthorized", "unknown key", Collections.emptyList(), true)
+            .describe());
+    assertEquals("monica: ingest rejected the envelope with 401 (unknown);"
+        + " no further envelopes will be sent",
+        new MonicaDiagnostic(401, null, null, Collections.emptyList(), true).describe());
   }
 
   @Test

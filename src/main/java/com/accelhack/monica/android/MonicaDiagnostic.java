@@ -98,6 +98,13 @@ public final class MonicaDiagnostic {
   public String describe() {
     StringBuilder line = new StringBuilder("monica: ingest rejected the envelope with ")
         .append(status);
+    if (stopped) {
+      // A refused key is never about a field, so the issue count would only be a
+      // confusing zero. Every MONICA SDK words this one identically, down to the
+      // "unknown" that stands in for a body that carried no code.
+      return line.append(" (").append(code == null || code.isEmpty() ? "unknown" : code)
+          .append("); no further envelopes will be sent").toString();
+    }
     if (code != null && !code.isEmpty()) line.append(" (").append(code).append(')');
     line.append(": ").append(issues.size()).append(" issue(s)");
     int described = Math.min(issues.size(), MAX_DESCRIBED_ISSUES);
@@ -108,7 +115,6 @@ public final class MonicaDiagnostic {
     if (issues.size() > described) {
       line.append("; and ").append(issues.size() - described).append(" more");
     }
-    if (stopped) line.append("; no further envelopes will be sent");
     return line.toString();
   }
 

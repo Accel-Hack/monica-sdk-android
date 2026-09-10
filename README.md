@@ -223,8 +223,18 @@ MonicaAndroidOptions.builder()
 
 `401`（`drop_and_stop`）は破棄した上で **その transport から以後 POST しない**。key 自体が
 拒否されているので、送っても拒否され続けるだけで、モバイル回線ではその通信量は利用者の
-ものだから。止まったことは既定の logcat 行（`no further envelopes will be sent`）と
-`HttpUrlConnectionTransport#isStopped()` で分かる。
+ものだから。止まったことは既定の logcat 行と `HttpUrlConnectionTransport#isStopped()` で分かる。
+この行も 6 つの SDK で共通で、field の話ではないので issue 数は付けない（body に `code` が
+無ければ `unknown`）。
+
+```text
+monica: ingest rejected the envelope with 401 (unauthorized); no further envelopes will be sent
+```
+
+なお **JVM の `HttpURLConnection` は `401` / `407` の error body を渡さない**（`setFixedLengthStreamingMode`
+と併用したとき、認証の再送を自前で扱う経路に入るため。`400` や `422` は渡す）。そのため
+`mvn verify` の中では `401` の `code` は `unknown` になる。端末の `HttpURLConnection` は OkHttp 実装で
+body を渡すので、実機では `code` が入り得る。`422` の issues はこの影響を受けない。
 
 `.transport()` で自分の transport を渡した場合、`onDiagnostic` はそこへは届かない。
 body を読むのは組み込みの `HttpUrlConnectionTransport` だけ。
