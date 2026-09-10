@@ -194,9 +194,24 @@ Activity 遷移は `ui.lifecycle` breadcrumb と `screen` tag に残す。値は
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
 ```
 
-書式は 6 つの SDK で共通。API key も envelope の中身も出さない。1 envelope につき 1 回で、
-再試行のたびには出さない（`4xx` は再試行しないので、そもそも 1 回しか起きない）。
-issues が 10 件を超える分は `and N more` に丸める。
+書式は 6 つの SDK で共通。`code` が読めなかったときは `(unknown)` になるが、括弧は必ず付く。
+API key も envelope の中身も出さない。1 envelope につき 1 回で、再試行のたびには出さない
+（`4xx` は再試行しないので、そもそも 1 回しか起きない）。
+
+**issues が 10 件を超える分を `; and N more` に丸めるのは、この SDK だけの仕様。** logcat は
+1 メッセージを約 4 KB で打ち切るので、丸めないと行の末尾——警告の中身そのもの——が黙って
+消える。他の SDK は全件残る出力先に書くので丸めていない。`issues()` からは常に全件取れる。
+
+body の読み取りには上限が 2 つある。1 つは 64 KiB（`MAX_DRAIN_BYTES`）で、body を無限に
+流す proxy や captive portal が単一の sender thread を占有しないため。もう 1 つは fatal を
+含む envelope の締切（`shutdownTimeout`）で、`setReadTimeout` は 1 回の `read` しか縛らない
+ため、1 byte ずつ届く body は timeout に触れないままプロセスを何十秒も待たせられる。
+どちらに掛かっても例外にはせず、issues 無し（status だけ）の報告として扱う。
+
+ただし **締切の判定は `read` の合間で行うので、進行中の `read` 1 回分（最大でその時点の
+read timeout ぶん、これも締切の残り時間まで切り詰めてある）の超過は残る。** 「必ず締切内で
+止まる」ではなく「上限が付いた」が正しい。変更前の drain は締切を一切見ていなかったので、
+その点は改善になっている。
 
 プログラムから受け取るには `onDiagnostic` を渡す。**渡すと既定の logcat 行は出なくなる**
 ので、`onDiagnostic(d -> {})` が無効化にあたる。自前の listener には既定が黙っている

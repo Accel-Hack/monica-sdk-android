@@ -213,8 +213,12 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
   /**
    * Reads the error body of a dropped 4xx, bounded twice over: {@link #MAX_DRAIN_BYTES}
    * so a body that streams forever cannot pin the single sender thread, and the fatal
-   * deadline so a body that trickles cannot outlive the crashing process. The read
-   * timeout configured on the connection bounds each individual read.
+   * deadline so a body that trickles cannot outlive the crashing process.
+   *
+   * <p>The deadline is checked between reads, not during one, so a read already in
+   * flight can still overrun it by up to one read timeout — which is itself already cut
+   * down to what was left of the deadline. That is a bound, not an exact stop; the drain
+   * this replaces had no bound at all.
    *
    * @return the body, or {@code null} when there was none, it did not fit the cap, or
    *     reading it ran out of time or failed; every one of those is reported as a
@@ -257,8 +261,11 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
    * empty, not JSON, no {@code error} object, an issue whose {@code path} or
    * {@code message} is not a string — is left out instead of rejected, because the
    * status alone is already worth reporting.
+   *
+   * <p>Package-private so a test can build a report without racing two sender threads to
+   * reach the state it is about.
    */
-  private MonicaDiagnostic parse(int status, byte[] body) {
+  MonicaDiagnostic parse(int status, byte[] body) {
     String code = null;
     String message = null;
     List<MonicaDiagnostic.Issue> issues = new ArrayList<>();
@@ -280,7 +287,11 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
         // Not JSON, or truncated. The status is still the answer.
       }
     }
-    return new MonicaDiagnostic(status, code, message, issues, stopped);
+    // Whether *this* response stopped sending, not whether the transport happens to be
+    // stopped: one shared between clients could already have been stopped by an earlier
+    // 401, and a 422 that inherited the flag would be logged as a stop and lose the very
+    // issues it was read for.
+    return new MonicaDiagnostic(status, code, message, issues, status == 401);
   }
 
   private static boolean carriesFatal(MonicaEnvelope envelope) {

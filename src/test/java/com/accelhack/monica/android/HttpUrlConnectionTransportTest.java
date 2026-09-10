@@ -424,7 +424,30 @@ class HttpUrlConnectionTransportTest {
       assertEquals(1, diagnostics.size(), label + ": the status is still worth reporting");
       assertEquals(422, diagnostics.get(0).status(), label);
       assertEquals(Collections.emptyList(), diagnostics.get(0).issues(), label);
+      // The parenthesis stays even with nothing to put in it, so the line reads the same
+      // in every SDK whatever ingest managed to say.
+      assertEquals("monica: ingest rejected the envelope with 422 (unknown): 0 issue(s)",
+          diagnostics.get(0).describe(), label);
     }
+  }
+
+  @Test
+  void aStoppedTransportDoesNotTurnALaterRejectionIntoAStop() throws Exception {
+    // A transport shared between clients has a sender thread each, so a 401 on one and a
+    // 422 on the other overlap. The stop belongs to the response that caused it: were the
+    // 422 to inherit the flag, it would print the stop line and lose the issues it was
+    // read for. The window is a race, so the report is built directly rather than raced.
+    respondWith(new int[] {401, -1});
+    HttpUrlConnectionTransport transport = reporting(0);
+    assertFalse(transport.send(envelope("boom", "error")));
+    assertTrue(transport.isStopped());
+
+    MonicaDiagnostic rejection = transport.parse(422, REJECTION.getBytes(StandardCharsets.UTF_8));
+
+    assertFalse(rejection.stopped(), "a 422 is not a stop, whatever the transport's state");
+    assertEquals("monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s);"
+        + " $.items[0].request.method: Invalid type: Expected string", rejection.describe());
+    assertTrue(transport.parse(401, new byte[0]).stopped(), "a 401 still is one");
   }
 
   @Test

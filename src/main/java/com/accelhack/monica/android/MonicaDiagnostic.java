@@ -25,7 +25,14 @@ import java.util.List;
  * @see MonicaAndroidOptions.Builder#onDiagnostic(MonicaDiagnosticListener)
  */
 public final class MonicaDiagnostic {
-  /** How many issues {@link #describe()} spells out; a 64 KiB body can hold thousands. */
+  /**
+   * How many issues {@link #describe()} spells out; a 64 KiB body can hold thousands.
+   *
+   * <p>Android-specific: logcat truncates a message at about 4 KiB, so an unbounded line
+   * would lose its own tail — the whole point of the warning — rather than scroll. The
+   * other SDKs log to somewhere that keeps the lot, so they do not cap. {@link #issues()}
+   * always carries every one of them.
+   */
   private static final int MAX_DESCRIBED_ISSUES = 10;
 
   private final int status;
@@ -91,21 +98,21 @@ public final class MonicaDiagnostic {
 
   /**
    * The one line the SDK logs by default. Wording is shared by every MONICA SDK, so a
-   * search for it finds the same problem whichever platform reported it.
+   * search for it finds the same problem whichever platform reported it. The parenthesis
+   * is always there, {@code (unknown)} when the body carried no code, so the shape does
+   * not depend on what ingest managed to say.
    *
    * @return a line safe to log; it contains no key and no envelope content
    */
   public String describe() {
     StringBuilder line = new StringBuilder("monica: ingest rejected the envelope with ")
-        .append(status);
+        .append(status).append(" (").append(code == null || code.isEmpty() ? "unknown" : code)
+        .append(')');
     if (stopped) {
-      // A refused key is never about a field, so the issue count would only be a
-      // confusing zero. Every MONICA SDK words this one identically, down to the
-      // "unknown" that stands in for a body that carried no code.
-      return line.append(" (").append(code == null || code.isEmpty() ? "unknown" : code)
-          .append("); no further envelopes will be sent").toString();
+      // A refused key is never about a field, so an issue count could only be a
+      // confusing zero.
+      return line.append("; no further envelopes will be sent").toString();
     }
-    if (code != null && !code.isEmpty()) line.append(" (").append(code).append(')');
     line.append(": ").append(issues.size()).append(" issue(s)");
     int described = Math.min(issues.size(), MAX_DESCRIBED_ISSUES);
     for (int index = 0; index < described; index++) {
