@@ -236,9 +236,8 @@ envelope を分割しているので、ingest が `413` を返す状況を作ら
 
 4 個の repository secret `MAVEN_CENTRAL_USERNAME`、`MAVEN_CENTRAL_TOKEN`、
 `MAVEN_GPG_PRIVATE_KEY`、`MAVEN_GPG_PASSPHRASE` を設定し、対応する main commit へ
-`android-vX.Y.Z` tag を付けると `.github/workflows/maven-release.yml` が動く。
-tag の prefix が `monica-sdk-java` の `maven-v*` と違うのは、2 つの公開を通知や検索で
-区別するため。
+`vX.Y.Z` tag を付けると `.github/workflows/maven-release.yml` が動く。この repository
+が出す artifact は `monica-android` 1 つなので、tag に artifact 名の prefix は付けない。
 
 workflow は tag と POM version の対応を検証し、release version へ一時変換してから、
 source / Javadoc jar と GPG signature を含む artifact を Maven Central へ公開する。

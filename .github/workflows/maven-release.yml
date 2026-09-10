@@ -1,16 +1,17 @@
 name: Maven release
 
 # pom.xml を X.Y.Z-SNAPSHOT へ更新して main へ merge した後、
-# android-vX.Y.Z tag をその commit へ付けると Maven Central へ公開する。
+# vX.Y.Z tag をその commit へ付けると Maven Central へ公開する。
 #
 # 移設元は Accel-Hack/monica の .github/workflows/maven-release.yml。変えたのは
 # repository 名、単独 pom.xml になったことによる `-f sdk/java/pom.xml` と
-# `-DprocessAllModules` の削除、そして tag の prefix。monica-sdk-java は
-# `maven-v*` を使うので、同じ prefix だと通知や検索で 2 つの公開が区別できない。
+# `-DprocessAllModules` の削除、そして tag の prefix。移設元は npm と Maven が同居して
+# いたので `maven-v*` で区別していたが、この repository が出す artifact は 1 つなので
+# 素の `v*` でよい。
 on:
   push:
     tags:
-      - "android-v*"
+      - "v*"
 
 concurrency:
   group: maven-release
@@ -55,9 +56,9 @@ jobs:
             exit 1
           }
 
-          tag_version="${GITHUB_REF_NAME#android-v}"
+          tag_version="${GITHUB_REF_NAME#v}"
           if [[ ! "$tag_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::release tag は android-vX.Y.Z 形式にしてください。"
+            echo "::error::release tag は vX.Y.Z 形式にしてください。"
             exit 1
           fi
           pom_version=$(mvn --batch-mode --no-transfer-progress \
