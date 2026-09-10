@@ -181,42 +181,20 @@ Activity 遷移は `ui.lifecycle` breadcrumb と `screen` tag に残す。値は
 
 ## ingest が envelope を弾いたとき
 
-`spec/v1/ingest.md` は `422`（envelope schema 不正）について「破棄し、`issues` の path を
-見て payload を直す」と定めている。この path は **SDK が body を読まないと誰にも届かない。**
-実際に、`beforeSend` で allowlist 方式に組み直した際に `request.method`（`request` が
-あるなら必須）を落としてしまい、導入以来 1 件も送信されていないことに長く気付かなかった、
-という事故が起きている。
-
-そこで transport は `429` を除く `4xx` の body を `error.json` として読み、**`422` は
-既定で logcat の tag `MONICA` に 1 行残す。**
+transport は `429` を除く `4xx` のレスポンス body を `error.json` として読み、**`422` は既定で
+logcat の tag `MONICA` に 1 行出す。** `401` で送信を止めたときも同じ tag に 1 行出る。
 
 ```text
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
+monica: ingest rejected the envelope with 401 (unauthorized); no further envelopes will be sent
 ```
 
-書式は 6 つの SDK で共通。`code` が読めなかったときは `(unknown)` になるが、括弧は必ず付く。
-API key も envelope の中身も出さない。1 envelope につき 1 回で、再試行のたびには出さない
-（`4xx` は再試行しないので、そもそも 1 回しか起きない）。
+`code` が読めなかったときは `(unknown)` になる。API key も envelope の中身も出さない。
+1 envelope につき 1 回で、再試行のたびには出さない。issues は 10 件までを行に並べ、超えた分は
+`; and N more` に丸める（`issues()` からは常に全件取れる）。
 
-**issues が 10 件を超える分を `; and N more` に丸めるのは、この SDK だけの仕様。** logcat は
-1 メッセージを約 4 KB で打ち切るので、丸めないと行の末尾——警告の中身そのもの——が黙って
-消える。他の SDK は全件残る出力先に書くので丸めていない。`issues()` からは常に全件取れる。
-
-body の読み取りには上限が 2 つある。1 つは 64 KiB（`MAX_DRAIN_BYTES`）で、body を無限に
-流す proxy や captive portal が単一の sender thread を占有しないため。もう 1 つは fatal を
-含む envelope の締切（`shutdownTimeout`）で、`setReadTimeout` は 1 回の `read` しか縛らない
-ため、1 byte ずつ届く body は timeout に触れないままプロセスを何十秒も待たせられる。
-どちらに掛かっても例外にはせず、issues 無し（status だけ）の報告として扱う。
-
-ただし **締切の判定は `read` の合間で行うので、進行中の `read` 1 回分（最大でその時点の
-read timeout ぶん、これも締切の残り時間まで切り詰めてある）の超過は残る。** 「必ず締切内で
-止まる」ではなく「上限が付いた」が正しい。変更前の drain は締切を一切見ていなかったので、
-その点は改善になっている。
-
-プログラムから受け取るには `onDiagnostic` を渡す。**渡すと既定の logcat 行は出なくなる**
-ので、`onDiagnostic(d -> {})` が無効化にあたる。自前の listener には既定が黙っている
-`400` / `413` も届く（SDK 側に足せる説明が無く、event ごとに logcat を汚すと警告自体が
-無視されるため、既定では出さない）。
+プログラムから受け取るには `onDiagnostic` を渡す。**渡すと既定の logcat 行は出なくなる**ので、
+`onDiagnostic(d -> {})` が無効化にあたる。自前の listener には、既定が出さない `400` / `413` も届く。
 
 ```java
 MonicaAndroidOptions.builder()
@@ -229,30 +207,18 @@ MonicaAndroidOptions.builder()
 ```
 
 `MonicaDiagnostic` は `status()` / `code()` / `message()` / `issues()` / `stopped()` /
-`describe()` を持つ。`code()` は人が読む用で、分岐は `status()` で行う。sender thread の
-上で呼ばれるのでブロックしてはいけない。listener が投げた例外は握り潰す。
+`describe()` を持つ。`code()` は人が読む用なので、分岐は `status()` で行う。listener は sender
+thread の上で呼ばれるのでブロックしてはいけない。listener が投げた例外は握り潰す。
 
-**結果型ではなく listener なのは、`monica-core` 0.1.1 の `MonicaTransport#send` が
-`boolean` を返すから。** core の API はこの repository から変えられない。core が結果を
-返す `deliver()` を持ったら、そちらへ寄せて listener は互換のための薄い層にする。
+body は 64 KiB まで読む。fatal を含む envelope では `shutdownTimeout` の残り時間で打ち切る。
+どちらに掛かっても例外にはならず、issues 無し（status だけ）の報告になる。
 
-`401`（`drop_and_stop`）は破棄した上で **その transport から以後 POST しない**。key 自体が
-拒否されているので、送っても拒否され続けるだけで、モバイル回線ではその通信量は利用者の
-ものだから。止まったことは既定の logcat 行と `HttpUrlConnectionTransport#isStopped()` で分かる。
-この行も 6 つの SDK で共通で、field の話ではないので issue 数は付けない（body に `code` が
-無ければ `unknown`）。
+`401`（`drop_and_stop`）は破棄した上で、**その transport から以後 POST しない。** 止まったことは
+上の logcat 行と `HttpUrlConnectionTransport#isStopped()` で分かる。送信を再開するには
+`MonicaAndroid.install()` をやり直す。
 
-```text
-monica: ingest rejected the envelope with 401 (unauthorized); no further envelopes will be sent
-```
-
-なお **JVM の `HttpURLConnection` は `401` / `407` の error body を渡さない**（`setFixedLengthStreamingMode`
-と併用したとき、認証の再送を自前で扱う経路に入るため。`400` や `422` は渡す）。そのため
-`mvn verify` の中では `401` の `code` は `unknown` になる。端末の `HttpURLConnection` は OkHttp 実装で
-body を渡すので、実機では `code` が入り得る。`422` の issues はこの影響を受けない。
-
-`.transport()` で自分の transport を渡した場合、`onDiagnostic` はそこへは届かない。
-body を読むのは組み込みの `HttpUrlConnectionTransport` だけ。
+`.transport()` で自分の transport を渡した場合、`onDiagnostic` は届かない。body を読むのは
+組み込みの `HttpUrlConnectionTransport` だけ。
 
 ## クラッシュ
 
