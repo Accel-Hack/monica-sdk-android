@@ -35,10 +35,13 @@ class HttpUrlConnectionTransportTest {
   private HttpServer server;
   private final List<Request> requests = Collections.synchronizedList(new ArrayList<>());
   private final List<int[]> responses = Collections.synchronizedList(new ArrayList<>());
+  private final List<MonicaDiagnostic> diagnostics = Collections.synchronizedList(new ArrayList<>());
   private final AtomicInteger redirectTargetHits = new AtomicInteger();
   private final CountDownLatch hang = new CountDownLatch(1);
   private volatile boolean hangResponses;
   private volatile int bodyBytes;
+  private volatile byte[] errorBody;
+  private volatile boolean trickleBody;
 
   @BeforeEach
   void start() throws Exception {
@@ -90,6 +93,30 @@ class HttpUrlConnectionTransportTest {
       exchange.getResponseHeaders().add("Location", "http://127.0.0.1:"
           + server.getAddress().getPort() + "/elsewhere");
     }
+    byte[] error = errorBody;
+    if (error != null) {
+      if (trickleBody) {
+        // A body that arrives byte by byte: the read timeout never fires, so only a
+        // wall-clock bound can keep a fatal send inside its deadline.
+        exchange.sendResponseHeaders(programmed[0], 0);
+        try (OutputStream output = exchange.getResponseBody()) {
+          for (byte value : error) {
+            output.write(value);
+            output.flush();
+            if (hang.await(200, TimeUnit.MILLISECONDS)) break;
+          }
+        } catch (InterruptedException ignored) {
+          Thread.currentThread().interrupt();
+        }
+      } else {
+        exchange.sendResponseHeaders(programmed[0], error.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+          output.write(error);
+        }
+      }
+      exchange.close();
+      return;
+    }
     if (bodyBytes > 0) {
       exchange.sendResponseHeaders(programmed[0], bodyBytes);
       try (OutputStream output = exchange.getResponseBody()) {
@@ -102,6 +129,39 @@ class HttpUrlConnectionTransportTest {
       exchange.sendResponseHeaders(programmed[0], -1);
     }
     exchange.close();
+  }
+
+  /** What ingest actually answers a 422 with; see spec/v1/error.json. */
+  private static final String REJECTION = "{\"error\":{\"code\":\"invalid_envelope\","
+      + "\"message\":\"envelope failed validation\",\"issues\":[{"
+      + "\"path\":\"$.items[0].request.method\","
+      + "\"message\":\"Invalid type: Expected string\"}]}}";
+
+  private HttpUrlConnectionTransport reporting(int maxRetries) {
+    return new HttpUrlConnectionTransport(dsn(), maxRetries, Duration.ofSeconds(5), null,
+        diagnostics::add);
+  }
+
+  /** Options for an install that only exercises sending: no crash handler, no Activities. */
+  private MonicaAndroidOptions.Builder installOptions() {
+    return MonicaAndroidOptions.builder()
+        .dsn(dsn())
+        .environment("test")
+        .captureUncaughtExceptions(false)
+        .trackScreens(false)
+        .flushInterval(Duration.ofHours(1))
+        .maxRetries(2);
+  }
+
+  /** A well-formed rejection that is nevertheless past the drain cap. */
+  private static byte[] oversizedBody() {
+    StringBuilder padded = new StringBuilder("{\"error\":{\"code\":\"invalid_envelope\","
+        + "\"message\":\"envelope failed validation\",\"issues\":[");
+    while (padded.length() < HttpUrlConnectionTransport.MAX_DRAIN_BYTES * 2) {
+      padded.append("{\"path\":\"$.items[0].message\",\"message\":\"too long\"},");
+    }
+    padded.append("{\"path\":\"$.items[0].message\",\"message\":\"too long\"}]}}");
+    return padded.toString().getBytes(StandardCharsets.UTF_8);
   }
 
   private MonicaClient client(int maxRetries) {
@@ -277,6 +337,178 @@ class HttpUrlConnectionTransportTest {
     assertTrue(transport.send(envelope("boom", "error")));
     assertTrue(transport.send(envelope("boom", "error")), "the next send must still work");
     assertEquals(2, requests.size());
+  }
+
+  @Test
+  void warnsWithTheIssuePathsIngestReturnedForA422() throws Exception {
+    // The whole point of reading the body: without these paths, an integrator whose
+    // beforeSend drops a required field has no way to learn that nothing arrives.
+    respondWith(new int[] {422, -1});
+    errorBody = REJECTION.getBytes(StandardCharsets.UTF_8);
+    FakePlatform platform = new FakePlatform();
+
+    try (MonicaAndroid monica = MonicaAndroid.install(platform, installOptions().build())) {
+      monica.captureMessage("boom");
+      assertFalse(monica.flush(Duration.ofSeconds(5)));
+    }
+
+    assertEquals(1, requests.size(), "a 422 must still not be retried");
+    String warning = String.join("\n", platform.warnings());
+    assertTrue(warning.contains("monica: ingest rejected the envelope with 422 (invalid_envelope)"),
+        warning);
+    assertTrue(warning.contains("$.items[0].request.method"), warning);
+    assertTrue(warning.contains("Invalid type: Expected string"), warning);
+  }
+
+  @Test
+  void theDefaultWarningStaysQuietForA400ItCannotExplain() throws Exception {
+    // A 400 carries no issues, so a line per event would only teach integrators to
+    // ignore the tag. It still reaches a listener of their own.
+    respondWith(new int[] {400, -1});
+    errorBody = "{\"error\":{\"code\":\"bad_request\",\"message\":\"malformed body\"}}"
+        .getBytes(StandardCharsets.UTF_8);
+    FakePlatform platform = new FakePlatform();
+
+    try (MonicaAndroid monica = MonicaAndroid.install(platform, installOptions().build())) {
+      monica.captureMessage("boom");
+      assertFalse(monica.flush(Duration.ofSeconds(5)));
+    }
+
+    assertEquals(Collections.emptyList(), platform.warnings());
+  }
+
+  @Test
+  void handsTheParsedIssuesToTheListener() throws Exception {
+    respondWith(new int[] {422, -1});
+    errorBody = REJECTION.getBytes(StandardCharsets.UTF_8);
+
+    assertFalse(reporting(2).send(envelope("boom", "error")));
+
+    assertEquals(1, requests.size());
+    assertEquals(1, diagnostics.size());
+    MonicaDiagnostic diagnostic = diagnostics.get(0);
+    assertEquals(422, diagnostic.status());
+    assertEquals("invalid_envelope", diagnostic.code());
+    assertEquals("envelope failed validation", diagnostic.message());
+    assertFalse(diagnostic.stopped());
+    assertEquals(1, diagnostic.issues().size());
+    assertEquals("$.items[0].request.method", diagnostic.issues().get(0).path());
+    assertEquals("Invalid type: Expected string", diagnostic.issues().get(0).message());
+  }
+
+  @Test
+  void reportsA422WithNoIssuesRatherThanFailingOnABodyThatDoesNotFitTheContract() throws Exception {
+    // Every one of these is something an ingest, a proxy or a captive portal can answer
+    // with. None of them may throw, and none may turn the drop into a retry.
+    byte[][] bodies = {
+      new byte[0],
+      "not json at all".getBytes(StandardCharsets.UTF_8),
+      "[]".getBytes(StandardCharsets.UTF_8),
+      "{\"error\":\"a string, not an object\"}".getBytes(StandardCharsets.UTF_8),
+      "{\"error\":{\"issues\":[{\"path\":7,\"message\":\"not a string\"},{\"path\":\"$.a\"}]}}"
+          .getBytes(StandardCharsets.UTF_8),
+      "{\"error\":{\"code\":\"invalid_envelope\",\"message\":\"truncated\",\"issues\":[{\"path\":"
+          .getBytes(StandardCharsets.UTF_8),
+      oversizedBody(),
+    };
+    for (byte[] body : bodies) {
+      requests.clear();
+      responses.clear();
+      diagnostics.clear();
+      respondWith(new int[] {422, -1});
+      errorBody = body;
+
+      String label = "body of " + body.length + " bytes";
+      assertFalse(reporting(2).send(envelope("boom", "error")), label);
+      assertEquals(1, requests.size(), label + ": must not be retried");
+      assertEquals(1, diagnostics.size(), label + ": the status is still worth reporting");
+      assertEquals(422, diagnostics.get(0).status(), label);
+      assertEquals(Collections.emptyList(), diagnostics.get(0).issues(), label);
+    }
+  }
+
+  @Test
+  void stopsSendingAfterA401BecauseTheKeyItselfWasRefused() throws Exception {
+    respondWith(new int[] {401, -1}, new int[] {202, -1});
+    errorBody = "{\"error\":{\"code\":\"unauthorized\",\"message\":\"unknown key\"}}"
+        .getBytes(StandardCharsets.UTF_8);
+    HttpUrlConnectionTransport transport = reporting(2);
+
+    assertFalse(transport.send(envelope("boom", "error")));
+    assertTrue(transport.isStopped());
+    assertFalse(transport.send(envelope("boom", "error")), "a stopped transport accepts nothing");
+    assertFalse(transport.send(envelope("crash", "fatal")), "not even a crash gets through");
+
+    assertEquals(1, requests.size(), "nothing may be posted after a 401");
+    assertEquals(1, diagnostics.size(), "the stop is reported once, not per dropped envelope");
+    assertTrue(diagnostics.get(0).stopped());
+    assertTrue(diagnostics.get(0).describe().contains("no further envelopes will be sent"),
+        diagnostics.get(0).describe());
+  }
+
+  @Test
+  void doesNotReadTheBodyOfA429ItIsAboutToRetry() throws Exception {
+    respondWith(new int[] {429, 0}, new int[] {202, -1});
+    errorBody = REJECTION.getBytes(StandardCharsets.UTF_8);
+
+    assertTrue(reporting(2).send(envelope("boom", "error")));
+
+    assertEquals(2, requests.size());
+    assertEquals(Collections.emptyList(), diagnostics, "a retried status is not a rejection");
+  }
+
+  @Test
+  void aTricklingErrorBodyDoesNotOutliveTheFatalDeadline() throws Exception {
+    // The read timeout is per read, so a body that dribbles a byte at a time stays
+    // inside it forever. Reading the issues must not cost the crashing thread its
+    // deadline; giving up on the body is the right trade.
+    respondWith(new int[] {422, -1});
+    errorBody = REJECTION.getBytes(StandardCharsets.UTF_8);
+    trickleBody = true;
+    HttpUrlConnectionTransport transport = new HttpUrlConnectionTransport(dsn(), 2,
+        Duration.ofSeconds(10), Duration.ofMillis(600), diagnostics::add);
+
+    long started = System.nanoTime();
+    assertFalse(transport.send(envelope("crash", "fatal")));
+    long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+    assertTrue(elapsedMillis < 3_000, "the deadline did not bound the body read: " + elapsedMillis);
+    assertEquals(1, requests.size());
+    assertEquals(1, diagnostics.size());
+    assertEquals(422, diagnostics.get(0).status());
+    assertEquals(Collections.emptyList(), diagnostics.get(0).issues(),
+        "the body was abandoned mid-read, so there is nothing to report but the status");
+  }
+
+  @Test
+  void aListenerOfTheIntegratorsOwnReplacesTheLogLine() throws Exception {
+    respondWith(new int[] {422, -1});
+    errorBody = REJECTION.getBytes(StandardCharsets.UTF_8);
+    FakePlatform platform = new FakePlatform();
+
+    try (MonicaAndroid monica = MonicaAndroid.install(platform,
+        installOptions().onDiagnostic(diagnostics::add).build())) {
+      monica.captureMessage("boom");
+      assertFalse(monica.flush(Duration.ofSeconds(5)));
+    }
+
+    assertEquals(1, diagnostics.size());
+    assertEquals("$.items[0].request.method", diagnostics.get(0).issues().get(0).path());
+    assertEquals(Collections.emptyList(), platform.warnings(),
+        "a listener means the integrator decides what gets logged");
+  }
+
+  @Test
+  void describesManyIssuesWithoutSpellingOutEveryOne() {
+    List<MonicaDiagnostic.Issue> issues = new ArrayList<>();
+    for (int index = 0; index < 12; index++) {
+      issues.add(new MonicaDiagnostic.Issue("$.items[" + index + "]", "required"));
+    }
+    String line = new MonicaDiagnostic(422, "invalid_envelope", "no", issues, false).describe();
+    assertTrue(line.contains("12 issue(s)"), line);
+    assertTrue(line.contains("$.items[9]"), line);
+    assertFalse(line.contains("$.items[10]"), line);
+    assertTrue(line.contains("and 2 more"), line);
   }
 
   @Test

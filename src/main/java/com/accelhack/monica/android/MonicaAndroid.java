@@ -129,7 +129,7 @@ public final class MonicaAndroid implements AutoCloseable {
 
   private static MonicaAndroid create(AndroidPlatform platform, MonicaAndroidOptions options) {
     AndroidEnvironment environment = platform.environment();
-    MonicaClient client = buildClient(options, environment);
+    MonicaClient client = buildClient(platform, options, environment);
     try {
       if (options.attachDeviceContext() && environment != null) {
         environment.applyTo(client.globalScope());
@@ -361,12 +361,31 @@ public final class MonicaAndroid implements AutoCloseable {
     }
   }
 
-  private static MonicaClient buildClient(MonicaAndroidOptions options,
-      AndroidEnvironment environment) {
+  /**
+   * What the transport does with a rejection ingest explained. The configured listener
+   * wins; without one, a {@code 422} and the {@code 401} that stops sending become a
+   * logcat line, because those field paths are the only sign that a {@code beforeSend}
+   * has been dropping a required field and nothing has arrived since. A {@code 400} or
+   * {@code 413} only reaches a listener of the integrator's own: the SDK has nothing to
+   * add to them, and logcat noise on every event is how a warning gets ignored.
+   */
+  private static MonicaDiagnosticListener diagnosticListener(AndroidPlatform platform,
+      MonicaAndroidOptions options) {
+    if (options.onDiagnostic() != null) return options.onDiagnostic();
+    return diagnostic -> {
+      if (diagnostic.status() == 422 || diagnostic.stopped()) {
+        warn(platform, diagnostic.describe(), null);
+      }
+    };
+  }
+
+  private static MonicaClient buildClient(AndroidPlatform platform,
+      MonicaAndroidOptions options, AndroidEnvironment environment) {
     MonicaTransport transport = options.transport() != null ? options.transport()
         : new HttpUrlConnectionTransport(options.dsn(), options.maxRetries(),
             options.requestTimeout(),
-            options.captureUncaughtExceptions() ? options.shutdownTimeout() : null);
+            options.captureUncaughtExceptions() ? options.shutdownTimeout() : null,
+            diagnosticListener(platform, options));
     MonicaClient.Builder builder = MonicaClient.builder()
         .sdk(SDK_NAME, SDK_VERSION)
         .environment(options.environment())

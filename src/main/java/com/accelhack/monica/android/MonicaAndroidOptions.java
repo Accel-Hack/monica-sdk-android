@@ -41,6 +41,7 @@ public final class MonicaAndroidOptions {
   private final boolean trackScreens;
   private final boolean attachDeviceContext;
   private final MonicaTransport transport;
+  private final MonicaDiagnosticListener onDiagnostic;
   private final List<String> problems;
 
   private MonicaAndroidOptions(Builder builder) {
@@ -80,6 +81,7 @@ public final class MonicaAndroidOptions {
     trackScreens = builder.trackScreens;
     attachDeviceContext = builder.attachDeviceContext;
     transport = builder.transport;
+    onDiagnostic = builder.onDiagnostic;
     problems = Collections.unmodifiableList(found);
   }
 
@@ -173,6 +175,10 @@ public final class MonicaAndroidOptions {
     return transport;
   }
 
+  MonicaDiagnosticListener onDiagnostic() {
+    return onDiagnostic;
+  }
+
   private static int positive(int value, String name, List<String> problems) {
     if (value <= 0) problems.add(name + " must be positive");
     return value;
@@ -204,6 +210,7 @@ public final class MonicaAndroidOptions {
     private boolean trackScreens = true;
     private boolean attachDeviceContext = true;
     private MonicaTransport transport;
+    private MonicaDiagnosticListener onDiagnostic;
 
     /** The project DSN. It must carry a public {@code mpk_} key. */
     public Builder dsn(String value) {
@@ -308,9 +315,37 @@ public final class MonicaAndroidOptions {
       return this;
     }
 
-    /** Replaces the HTTP transport. Intended for tests. */
+    /**
+     * Replaces the HTTP transport. Intended for tests.
+     *
+     * <p>A transport supplied here is used as it is, so {@link #onDiagnostic} does not
+     * reach it; only the built-in {@code HttpUrlConnectionTransport} reads error bodies.
+     */
     public Builder transport(MonicaTransport value) {
       this.transport = value;
+      return this;
+    }
+
+    /**
+     * Replaces what happens when ingest refuses an envelope.
+     *
+     * <p>By default a {@code 422} — and the {@code 401} that stops sending — is written
+     * to logcat under the {@code MONICA} tag, spelling out the {@code issues} paths that
+     * say which field ingest rejected. That default is on because those paths are the
+     * only way to find out that, say, a {@code beforeSend} allowlist has been dropping a
+     * required field and nothing has arrived since.
+     *
+     * <p>Setting a listener replaces the log line, so {@code onDiagnostic(d -> {})}
+     * silences it, and a listener of one's own additionally sees the {@code 4xx} the
+     * default stays quiet about ({@code 400}, {@code 413}). It runs on the sender thread
+     * and must not block.
+     *
+     * @param value the listener, or {@code null} to keep the default log line
+     * @return this builder
+     * @see MonicaDiagnostic
+     */
+    public Builder onDiagnostic(MonicaDiagnosticListener value) {
+      this.onDiagnostic = value;
       return this;
     }
 
