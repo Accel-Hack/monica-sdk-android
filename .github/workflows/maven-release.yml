@@ -1,7 +1,9 @@
 name: Maven release
 
 # pom.xml を X.Y.Z-SNAPSHOT へ更新して main へ merge した後、
-# vX.Y.Z tag をその commit へ付けると Maven Central へ公開する。
+# vX.Y.Z tag をその commit へ付けるとこの repository の GitHub Packages へ公開する。
+# 公開も monica-core の取得も GITHUB_TOKEN で足りるので、secret は要らない。
+# GitHub Packages は GPG 署名を要求しないので署名もしない。
 #
 # 移設元は Accel-Hack/monica の .github/workflows/maven-release.yml。変えたのは
 # repository 名、単独 pom.xml になったことによる `-f sdk/java/pom.xml` と
@@ -19,13 +21,14 @@ concurrency:
 
 permissions:
   contents: read
-  # monica-core は Accel-Hack/monica-sdk-java の GitHub Packages から取る。
-  packages: read
+  # monica-android をこの repository の GitHub Packages へ出し、monica-core を
+  # Accel-Hack/monica-sdk-java の GitHub Packages から取る。
+  packages: write
 
 jobs:
   publish:
-    name: monica-androidをMaven Centralへ公開
-    # fork で tag を打っても走らないように。secret は元々渡らないが、落ちた理由が読める方がよい。
+    name: monica-androidをGitHub Packagesへ公開
+    # fork で tag を打っても、その fork の package へ publish しに行かないように。
     if: github.repository == 'Accel-Hack/monica-sdk-android'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -40,12 +43,11 @@ jobs:
           java-version: "11"
           cache: maven
           cache-dependency-path: pom.xml
-          # server-* / gpg-passphrase input は使わない。setup-java が書く settings.xml は
-          # server を 1 つしか持てないが、この job は Maven Central へ出す server と
-          # monica-core を GitHub Packages から読む server の両方が要る。両方を書いた
-          # .github/maven-settings.xml を mvn へ渡す。input と同じく credential 値では
-          # なく environment variable 名を持つので、secret は step の env から渡る。
-          gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
+          # server-* input は使わない。setup-java が書く settings.xml は server を 1 つ
+          # しか持てないが、この job は monica-android を出す server と monica-core を
+          # 読む server の両方が要る。両方を書いた .github/maven-settings.xml を mvn へ
+          # 渡す。input と同じく credential 値ではなく environment variable 名を持つので、
+          # token は step の env から渡る。
 
       - name: tag・main・POM versionを検証
         shell: bash
@@ -81,15 +83,14 @@ jobs:
             org.codehaus.mojo:versions-maven-plugin:2.21.0:set \
             -DnewVersion="$tag_version" -DgenerateBackupPoms=false
 
-      - name: 署名してMaven Centralへ公開
+      - name: GitHub Packagesへ公開
         run: >-
           mvn --batch-mode --no-transfer-progress
-          -s .github/maven-settings.xml
-          -Pcentral-release deploy
+          -s .github/maven-settings.xml deploy
         env:
-          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
-          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          # 公開用。job の permissions: packages: write で書き込める。
+          MONICA_PUBLISH_ACTOR: ${{ github.actor }}
+          MONICA_PUBLISH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # monica-core の解決用。ci.yml と同じ。
           MONICA_PACKAGES_ACTOR: ${{ github.actor }}
           MONICA_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
