@@ -58,9 +58,10 @@ DSN の key が MONICA 側のプロジェクトのものか、`mpk_` の public 
 
 どちらも既定では logcat に出ない。`onDiagnostic` に listener を渡すと届く。
 
-`413` はこの SDK では分割せず破棄する。envelope は送信前に `batchSize`（既定 `30`）で
-分割されるので、1 event が単体で上限を超えている場合に起きる。`beforeSend` で載せている
-context や breadcrumb の量を減らすか、`batchSize` を下げる。
+`413` はこの SDK では分割せず破棄する。envelope は送信前に `batchSize`（既定 `30`）件ずつ
+に分割されるが、サイズでは分割しないので、1 envelope が上限（gzip 後 1 MiB / 展開後 8 MiB）
+を超えると起きる。`beforeSend` で載せている context や breadcrumb の量を減らすか、
+`batchSize` を下げる。
 
 ## 送信結果の受け取り
 
@@ -78,7 +79,7 @@ MonicaAndroidOptions.builder()
 ```
 
 - **渡すと既定の logcat 行は出なくなる。** `onDiagnostic(d -> {})` が無効化にあたる
-- 既定が出さない `400` / `413` も届く
+- 既定が出さない `4xx`（`400` / `413` など）も届く
 - 呼ばれるのは envelope が破棄された `4xx`（`429` を除く）だけ。再試行・timeout・`5xx`
   では呼ばれない
 - listener は sender thread の上で呼ばれるのでブロックしてはいけない。listener が投げた
@@ -109,7 +110,7 @@ body は 64 KiB まで読む。fatal を含む envelope では `shutdownTimeout`
 | `2xx` | 受理 |
 | `429` | `Retry-After`（整数秒のみ、0〜60 秒に丸める）だけ待って再試行。数値でなければ backoff |
 | `5xx` / I/O 失敗 / status が読めない | backoff して再試行 |
-| `3xx` | 追わない（key を別 host へ送らないため）。破棄 |
+| `3xx` | 追わない（key を別 host へ送らないため）。破棄し、`onDiagnostic` にも出ない |
 | `4xx`（`429` 以外） | 破棄。再試行しない |
 
 backoff は 1 秒から倍々で 30 秒まで。実際の待ち時間はその半分〜満額のランダム値。

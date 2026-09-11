@@ -26,6 +26,7 @@ repository ごとなので、2 つ宣言する。
 // settings.gradle
 dependencyResolutionManagement {
   repositories {
+    google()
     mavenCentral()
     maven {
       url = uri('https://maven.pkg.github.com/Accel-Hack/monica-sdk-android')
@@ -122,8 +123,8 @@ monica.setScreen("CheckoutFragment");
 - 全ての event に付く tag・context・breadcrumb は `scope()` から足せる
   （`setTag` / `setUser` / `setContext` / `addBreadcrumb`）
 - `stats()` は queue の `getQueued()` と、溢れて捨てた `getDiscarded()` を返す
-- `flush(Duration)` は queue を送り切るまで、`close()` は `flushTimeout` まで
-  ブロックする。main thread では呼ばない
+- `flush(Duration)` は渡した時間まで、`close()` は `flushTimeout` まで、queue を
+  送り切るのを待ってブロックする。main thread では呼ばない
 - `install()` を 2 回呼ぶと前の instance が `close()` され、置き換わる
 
 ### 設定ミスで落とさない
@@ -151,14 +152,14 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 | `onDiagnostic` | `MonicaDiagnosticListener` | logcat へ 1 行 | ingest が envelope を弾いた理由の受け取り先 |
 | `sampleRate` | `double` | `1.0` | 0.0〜1.0 |
 | `maxQueueSize` | `int` | `100` | 溢れた分は捨てる |
-| `batchSize` | `int` | `30` | 1 envelope に載せる event 数 |
+| `batchSize` | `int` | `30` | 1 envelope に載せる event 数。`maxQueueSize` と `100` の小さい方で頭打ち |
 | `maxBreadcrumbs` | `int` | `50` | 超えた分は古い順に落とす |
 | `flushInterval` | `Duration` | `5s` | 通常時の送信間隔 |
 | `flushTimeout` | `Duration` | `2s` | `close()` が待つ上限 |
 | `shutdownTimeout` | `Duration` | `5s` | クラッシュ時に送信を待つ上限。fatal を含む envelope の送信締切にもなる |
 | `requestTimeout` | `Duration` | `10s` | 1 リクエストの connect / read timeout |
 | `maxRetries` | `int` | `2` | 再試行回数。負数は不正 |
-| `captureUncaughtExceptions` | `boolean` | `true` | 未捕捉例外を `level: fatal` で送る |
+| `captureUncaughtExceptions` | `boolean` | `true` | 未捕捉例外を `level: fatal` / `handled: false` で送る |
 | `trackScreens` | `boolean` | `true` | Activity 遷移の breadcrumb |
 | `attachDeviceContext` | `boolean` | `true` | 端末 / OS / アプリ context |
 | `transport` | `MonicaTransport` | 組み込みの HTTP transport | テスト用の差し替え口 |
@@ -173,9 +174,13 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 | `contexts.os` | `name`（`Android`）/ `version` / `api_level` |
 | `contexts.app` | `app_identifier`（package 名）/ `app_version`（versionName）/ `app_build`（versionCode） |
 
+端末から読めなかったキーは付かない（`api_level` と `app_build` は正の値のときだけ）。
+
 `trackScreens` が `true` のとき、Activity の `created` / `resumed` / `paused` /
 `destroyed` を `ui.lifecycle` breadcrumb に残し、`resumed` では `screen` tag も更新する。
 値は Activity の単純クラス名で、実行時の入力は含まない。
+
+未捕捉例外には、クラッシュしたスレッド名が `thread` tag に付く。
 
 `ANDROID_ID`、serial、IMEI、広告 ID、アカウント、位置情報、実ファイルパスは一切読まず、
 パーミッションを要求する API も呼ばない。個人に関する値は `setUser()` と `beforeSend`
@@ -185,16 +190,11 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 
 握り潰した失敗と、ingest が envelope を弾いた理由は logcat の tag `MONICA` に
 `Log.w` で 1 行出る（`adb logcat -s MONICA`）。既定で出るのは `422` と、送信を止める
-`401` の 2 つ。
+`401` の 2 つ。行に API key も envelope の中身も含まれない。プログラムから受け取るには
+`onDiagnostic` に `MonicaDiagnosticListener` を渡す。
 
-```text
-monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
-```
-
-プログラムから受け取るには `onDiagnostic` に `MonicaDiagnosticListener` を渡す。渡すと
-既定の logcat 行は出なくなり、代わりに `400` / `413` も届く。
-
-詳しくは [TROUBLESHOOTING.md](TROUBLESHOOTING.md) を見る。
+行の読み方、原因別の対処、`MonicaDiagnostic` の中身は
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) にある。
 
 ## 制約
 
