@@ -1,67 +1,29 @@
 # monica-sdk-android
 
-Android アプリへ組み込む MONICA SDK `com.accelhack.monica:monica-android` の正本。
-`monica-core` の queue、batch、sampling、`beforeSend`、envelope 分割をそのまま使い、
-Android で成立しない部分だけを差し替える。
+Android アプリで起きた例外とメッセージを MONICA の ingest へ送る SDK
+（`com.accelhack.monica:monica-android`）。
 
-- transport は `HttpURLConnection`。Android に `java.net.http.HttpClient` は無い
-- DSN は **public key（`mpk_`）だけ**を受け付ける。APK は誰でも展開できるので、
-  `msk_` を渡すと SDK は無効になり、何も送らない（logcat の tag `MONICA` に理由が出る）
-- 端末 / OS / アプリ version を `contexts` へ載せる。個体を特定する値は読まない
-- 未捕捉例外を `level: fatal` で捕まえ、送り切ってから元の handler へ委譲する
+## 対応環境
 
-AAR ではなく素の JAR で出す。Kotlin 専用 API も Gradle / AGP も足さない。
-`com.google.android:android` は compile 時の stub（`provided`）で、端末では実際の
-framework が使われる。
+| | |
+| --- | --- |
+| minSdk | 26 |
+| Java | 11（`sourceCompatibility` / `targetCompatibility`） |
+| AGP | 7.0 以上 |
+| 権限 | `android.permission.INTERNET` |
+| 形式 | JAR（AAR ではない。Gradle plugin も Kotlin 専用 API も持たない） |
 
-```bash
-mvn verify
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
 ```
 
-Java 11 で build する（Android の言語水準）。`monica-core` は別 repository
-（`Accel-Hack/monica-sdk-java`）から公開されたものを使うので、core を直してから
-ここで確かめるには、先に core を publish する必要がある。
+## インストール
 
-### monica-core の解決
-
-`monica-core` は  `Accel-Hack/monica-sdk-java` の
-**GitHub Packages** にある。
-
-credential は `gh` から借りるので, gh auth tokenに`read:packages`の権限が必要。
-401でpackagesが取得できない場合は以下のコマンドで権限を追加する。
-
-```bash
-gh auth refresh -s read:packages
-```
-
-```bash
-export MONICA_PACKAGES_ACTOR="$(gh api user --jq .login)"
-export MONICA_PACKAGES_TOKEN="$(gh auth token)"
-mvn -s .github/maven-settings.xml verify
-```
-
-## 導入
+`monica-android` と、依存する `monica-core` は GitHub Packages にある。registry は
+repository ごとなので、2 つ宣言する。
 
 ```groovy
-dependencies {
-  implementation 'com.accelhack.monica:monica-android:0.1.0'
-}
-
-android {
-  compileOptions {
-    sourceCompatibility JavaVersion.VERSION_11
-    targetCompatibility JavaVersion.VERSION_11
-  }
-  defaultConfig {
-    minSdk 26
-  }
-}
-```
-
-`monica-android` と `monica-core` は GitHub Packages にあるので、以下を
-`settings.gradle` に足す。registry は repository ごとなので、2 つ宣言する。
-
-```groovy
+// settings.gradle
 dependencyResolutionManagement {
   repositories {
     mavenCentral()
@@ -83,28 +45,43 @@ dependencyResolutionManagement {
 }
 ```
 
-credential は build 時に env から渡す。手元では `gh` から借りる。**token を発行して
-置く方法は採らない。** 未設定のまま build すると
-`Cannot query the value of this provider` で落ちる。
+```groovy
+// app/build.gradle
+dependencies {
+  implementation 'com.accelhack.monica:monica-android:0.1.0'
+}
+
+android {
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_11
+    targetCompatibility JavaVersion.VERSION_11
+  }
+  defaultConfig {
+    minSdk 26
+  }
+}
+```
+
+credential は build 時に環境変数から渡す。GitHub Packages は package が public でも
+匿名 read を拒否するので、`read:packages` を持つ token が要る。
 
 ```bash
 export MONICA_PACKAGES_ACTOR="$(gh api user --jq .login)"
 export MONICA_PACKAGES_TOKEN="$(gh auth token)"
 ```
 
-`minSdk 26` / AGP 7.0 以上。`monica-core` が `java.time`、`java.util.function`、
-`CompletableFuture` を使うため、これらが素で使える API level を下限にしている。
-21〜25 は core library desugaring を有効にすれば動くと思われるが、**未確認**。
-この jar は animal-sniffer（`gummy-bears-api-26`）で API 26 に無い JDK API を参照して
-いないことをビルドで検査している（`monica-core` 側も同じ検査を持つ）。
+`gh auth token` に `read:packages` が無いと 401 になる。その場合は追加する。
 
-インターネット権限が要る。
-
-```xml
-<uses-permission android:name="android.permission.INTERNET" />
+```bash
+gh auth refresh -s read:packages
 ```
 
+環境変数が未設定のまま build すると `Cannot query the value of this provider` で落ちる。
+
 ## 初期化
+
+`Application#onCreate` で 1 回だけ `install()` を呼ぶ。classpath に置いただけでは
+何も送らない。
 
 ```java
 public final class ExampleApp extends Application {
@@ -116,16 +93,21 @@ public final class ExampleApp extends Application {
         .environment(BuildConfig.DEBUG ? "development" : "production")
         .release(BuildConfig.VERSION_NAME)
         .inAppPackage("com.example.app")
-        .beforeSend((event, hint) -> event)
         .build());
   }
 }
 ```
 
-`install()` を呼ぶまで何も送らない。classpath に置いただけでは動き出さない。
+DSN は public key（`mpk_`）を含むものだけを受け付ける。`msk_` を渡すと SDK は無効に
+なり、何も送らない（理由は logcat の tag `MONICA` に出る）。DSN の scheme は `https`
+（`localhost` / `127.0.0.1` のみ例外）。
+
+## 使い方
 
 ```java
 MonicaAndroid monica = MonicaAndroid.current();
+
+monica.captureException(error);
 monica.captureException(error, CaptureContext.create().tag("feature", "checkout"));
 monica.captureMessage("payment retry exhausted", CaptureContext.create().level("warning"));
 monica.addBreadcrumb("ui.click", "submitButton");
@@ -133,156 +115,139 @@ monica.setUser("u_123");
 monica.setScreen("CheckoutFragment");
 ```
 
-### SDK の失敗はアプリへ波及させない
+- `MonicaAndroid.current()` は `null` を返さない。install 前、install 失敗後、
+  `close()` 後は何もしない instance を返す（`captureXxx` は `null`、`flush` は
+  `false`）。動いているかは `isInstalled()` で分かる
+- `CaptureContext` は `level` / `message` / `handled` / `tag` / `context` を持つ
+- 全ての event に付く tag・context・breadcrumb は `scope()` から足せる
+  （`setTag` / `setUser` / `setContext` / `addBreadcrumb`）
+- `stats()` は queue の `getQueued()` と、溢れて捨てた `getDiscarded()` を返す
+- `flush(Duration)` は queue を送り切るまで、`close()` は `flushTimeout` まで
+  ブロックする。main thread では呼ばない
+- `install()` を 2 回呼ぶと前の instance が `close()` され、置き換わる
 
-- **設定ミスでも投げない。** DSN（空、`msk_`、https 以外）、`environment`（空、129 文字以上）、
-  0 以下の `maxQueueSize` / `batchSize` / `maxBreadcrumbs`、0 以下や `null` の Duration、
-  0..1 の外の `sampleRate` は `MonicaAndroidOptions.build()` が見つけて `problems()` に集める。
-  `install()` は問題があれば logcat に理由を書き、何もしない instance を返す。`null` 引数も同じ
-- **開発中に厳しくしたいときは自分で投げる。** SDK は落とさないので、必要ならアプリ側で
+### 設定ミスで落とさない
 
-  ```java
-  MonicaAndroidOptions options = builder.build();
-  if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
-    throw new IllegalStateException("MONICA: " + options.problems());
-  }
-  ```
-- **`current()` は `null` を返さない。** install 前、install 失敗後、`close()` 後は何もしない
-  instance を返す。`captureXxx` は `null`、`flush` は `false` を返す。`isInstalled()` で見分ける
-- **public メソッドは全て `Throwable` を握る。** SDK の不具合でアプリは落ちない
-- **握り潰した失敗は logcat の tag `MONICA` に `Log.w` で 1 行残す。** 「event が届かない」ときは
-  `adb logcat -s MONICA` を見る
-- **`flush()` と `close()` はブロックする。main thread で呼ばない。** `close()` は
-  `flushTimeout`（既定 2 秒）までしか待たず、クラッシュ経路の `shutdownTimeout` とは別
+`MonicaAndroidOptions.build()` は不正な設定を見つけても例外を投げず、`problems()` に
+集める。`install()` はそれを logcat に書き、何もしない instance を返す。開発中に
+気付きたい場合はアプリ側で投げる。
 
-## option
+```java
+MonicaAndroidOptions options = builder.build();
+if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
+  throw new IllegalStateException("MONICA: " + options.problems());
+}
+```
 
-| option | 既定 | 意味 |
-| --- | --- | --- |
-| `dsn` | 必須 | `mpk_` の public key を含む DSN |
-| `environment` | 必須 | `production` など。前後の空白は落とす。128 文字まで |
-| `release` | `versionName` | 未指定ならアプリの versionName |
-| `inAppPackage` | アプリの package 名 | frame の `in_app` 判定 |
-| `beforeSend` | なし | 送信前の最後の関門。PII の除去はここ |
-| `onDiagnostic` | logcat へ 1 行 | ingest が envelope を弾いた理由の受け取り先 |
-| `sampleRate` | `1.0` | |
-| `maxQueueSize` / `batchSize` | `100` / `30` | |
-| `maxBreadcrumbs` | `50` | 超えた分は古い順に落とす |
-| `flushInterval` / `flushTimeout` | `5s` / `2s` | 通常時の送信間隔と、`flush()` / `close()` が待つ上限 |
-| `shutdownTimeout` | `5s` | クラッシュ時に送信を待つ上限。fatal を含む envelope の送信締切にもなる |
-| `requestTimeout` / `maxRetries` | `10s` / `2` | 通常の event 用。fatal では `shutdownTimeout` の残り時間に切り詰められる |
-| `captureUncaughtExceptions` | `true` | |
-| `trackScreens` | `true` | Activity 遷移の breadcrumb |
-| `attachDeviceContext` | `true` | 端末 / OS / アプリ context |
+## オプション
 
-## 自動で集めるもの / 集めないもの
+| option | 型 | 既定 | 説明 |
+| --- | --- | --- | --- |
+| `dsn` | `String` | 必須 | `mpk_` の public key を含む DSN |
+| `environment` | `String` | 必須 | `production` など。前後の空白は落とす。128 文字まで |
+| `release` | `String` | アプリの `versionName` | |
+| `inAppPackage` / `inAppPackages` | `String` / `Iterable<String>` | アプリの package 名 | frame の `in_app` 判定 |
+| `beforeSend` | `BeforeSend` | なし | 送信前の最後の関門。PII の除去はここ |
+| `onDiagnostic` | `MonicaDiagnosticListener` | logcat へ 1 行 | ingest が envelope を弾いた理由の受け取り先 |
+| `sampleRate` | `double` | `1.0` | 0.0〜1.0 |
+| `maxQueueSize` | `int` | `100` | 溢れた分は捨てる |
+| `batchSize` | `int` | `30` | 1 envelope に載せる event 数 |
+| `maxBreadcrumbs` | `int` | `50` | 超えた分は古い順に落とす |
+| `flushInterval` | `Duration` | `5s` | 通常時の送信間隔 |
+| `flushTimeout` | `Duration` | `2s` | `close()` が待つ上限 |
+| `shutdownTimeout` | `Duration` | `5s` | クラッシュ時に送信を待つ上限。fatal を含む envelope の送信締切にもなる |
+| `requestTimeout` | `Duration` | `10s` | 1 リクエストの connect / read timeout |
+| `maxRetries` | `int` | `2` | 再試行回数。負数は不正 |
+| `captureUncaughtExceptions` | `boolean` | `true` | 未捕捉例外を `level: fatal` で送る |
+| `trackScreens` | `boolean` | `true` | Activity 遷移の breadcrumb |
+| `attachDeviceContext` | `boolean` | `true` | 端末 / OS / アプリ context |
+| `transport` | `MonicaTransport` | 組み込みの HTTP transport | テスト用の差し替え口 |
 
-`contexts.device` に manufacturer / brand / model、`contexts.os` に `Android` と
-version / API level、`contexts.app` に package 名と versionName / versionCode。
-Activity 遷移は `ui.lifecycle` breadcrumb と `screen` tag に残す。値は Activity の
-単純クラス名で、実行時の入力は含まない。
+## 自動で収集するもの
 
-`ANDROID_ID`、serial、IMEI、広告 ID、アカウント、位置情報、実ファイルパスは
-**一切読まない**。パーミッションを要求する API も呼ばない。何が PII かはアプリ側にしか
-判断できないので、`setUser()` と `beforeSend` で明示した値だけを送る。
-`AndroidCompatibilityTest` が、framework に触る唯一のクラスの constant pool に
-これらの API 名が無いことをビルドで確かめている。
+`attachDeviceContext` が `true` のとき、全ての event に次が付く。
 
-## ingest が envelope を弾いたとき
+| context | 内容 |
+| --- | --- |
+| `contexts.device` | `manufacturer` / `brand` / `model` |
+| `contexts.os` | `name`（`Android`）/ `version` / `api_level` |
+| `contexts.app` | `app_identifier`（package 名）/ `app_version`（versionName）/ `app_build`（versionCode） |
 
-transport は `429` を除く `4xx` のレスポンス body を `error.json` として読み、**`422` は既定で
-logcat の tag `MONICA` に 1 行出す。** `401` で送信を止めたときも同じ tag に 1 行出る。
+`trackScreens` が `true` のとき、Activity の `created` / `resumed` / `paused` /
+`destroyed` を `ui.lifecycle` breadcrumb に残し、`resumed` では `screen` tag も更新する。
+値は Activity の単純クラス名で、実行時の入力は含まない。
+
+`ANDROID_ID`、serial、IMEI、広告 ID、アカウント、位置情報、実ファイルパスは一切読まず、
+パーミッションを要求する API も呼ばない。個人に関する値は `setUser()` と `beforeSend`
+で明示したものだけが送られる。
+
+## 送信結果と診断
+
+握り潰した失敗と、ingest が envelope を弾いた理由は logcat の tag `MONICA` に
+`Log.w` で 1 行出る（`adb logcat -s MONICA`）。既定で出るのは `422` と、送信を止める
+`401` の 2 つ。
 
 ```text
 monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
-monica: ingest rejected the envelope with 401 (unauthorized); no further envelopes will be sent
 ```
 
-`code` が読めなかったときは `(unknown)` になる。API key も envelope の中身も出さない。
-1 envelope につき 1 回で、再試行のたびには出さない。issues は 10 件までを行に並べ、超えた分は
-`; and N more` に丸める（`issues()` からは常に全件取れる）。
+プログラムから受け取るには `onDiagnostic` に `MonicaDiagnosticListener` を渡す。渡すと
+既定の logcat 行は出なくなり、代わりに `400` / `413` も届く。
 
-プログラムから受け取るには `onDiagnostic` を渡す。**渡すと既定の logcat 行は出なくなる**ので、
-`onDiagnostic(d -> {})` が無効化にあたる。自前の listener には、既定が出さない `400` / `413` も届く。
+詳しくは [TROUBLESHOOTING.md](TROUBLESHOOTING.md) を見る。
 
-```java
-MonicaAndroidOptions.builder()
-    .onDiagnostic(diagnostic -> {
-      Log.w("MONICA", diagnostic.describe());          // 既定と同じ 1 行
-      for (MonicaDiagnostic.Issue issue : diagnostic.issues()) {
-        myOwnMetrics.count("monica.rejected", issue.path());
-      }
-    })
+## 制約
+
+- **難読化するアプリは、次の 1 行を `proguard-rules.pro` に足す。** SDK 自身の keep
+  ルールは jar の `META-INF/proguard/monica-android.pro` に入っていて AGP が自動で
+  読むが、アプリの package 名は SDK からは分からない。無いとアプリの frame が 1 つも
+  `in_app` にならず、同じクラッシュが別 Issue に散り、スタックも読めない
+
+  ```
+  -keepnames class com.example.app.** { *; }   # inAppPackage() に渡す package と一致させる
+  ```
+- 難読化したビルドでは、frame の filename は残っているクラス名から導出した
+  `MainActivity.java` になる。Kotlin のアプリでは、難読化していないビルドの
+  `MainActivity.kt` と grouping が分かれる
+- **ディスクへの永続キューは持たない。** 未送信の event はプロセスが終わると失われる。
+  クラッシュ時は `shutdownTimeout` まで送信を待ってから元の handler へ委譲するので、
+  この値を短くすると取りこぼしやすくなる
+- `413`（契約上は `split_and_retry`）は分割せず破棄する。envelope は送信前に
+  `batchSize` で分割される
+- SDK の public メソッドは全て `Throwable` を握るので、SDK の不具合でアプリは落ちない。
+  代わりに失敗は logcat にしか出ない
+- `transport` を自前のものに差し替えると `onDiagnostic` は呼ばれない
+
+## ライセンス
+
+Apache License 2.0（[LICENSE](LICENSE)）。
+
+---
+
+## 開発者向け
+
+### ビルドとテスト
+
+```bash
+export MONICA_PACKAGES_ACTOR="$(gh api user --jq .login)"
+export MONICA_PACKAGES_TOKEN="$(gh auth token)"
+mvn -s .github/maven-settings.xml verify
 ```
 
-`MonicaDiagnostic` は `status()` / `code()` / `message()` / `issues()` / `stopped()` /
-`describe()` を持つ。`code()` は人が読む用なので、分岐は `status()` で行う。listener は sender
-thread の上で呼ばれるのでブロックしてはいけない。listener が投げた例外は握り潰す。
+Java 11 で build する。CI は Java 11 と 18 で `mvn verify` を回す。
 
-body は 64 KiB まで読む。fatal を含む envelope では `shutdownTimeout` の残り時間で打ち切る。
-どちらに掛かっても例外にはならず、issues 無し（status だけ）の報告になる。
+### monica-core の解決
 
-`401`（`drop_and_stop`）は破棄した上で、**その transport から以後 POST しない。** 止まったことは
-上の logcat 行と `HttpUrlConnectionTransport#isStopped()` で分かる。送信を再開するには
-`MonicaAndroid.install()` をやり直す。
+`monica-core` は `Accel-Hack/monica-sdk-java` の GitHub Packages にある。手元では
+credential を `gh` から借りる（token を発行して置かない）。401 になる場合は権限を足す。
 
-`.transport()` で自分の transport を渡した場合、`onDiagnostic` は届かない。body を読むのは
-組み込みの `HttpUrlConnectionTransport` だけ。
-
-## クラッシュ
-
-未捕捉例外は `level: fatal` / `handled: false` で capture し、クラッシュしたスレッドを
-`shutdownTimeout` まで待たせてから、元々登録されていた handler へ委譲する。HTTP 送信自体は
-core の sender thread で走るので、main thread から `NetworkOnMainThreadException` にはならない。
-
-fatal を含む envelope は `shutdownTimeout` を締切として送る。`requestTimeout`（既定 10 秒）と
-`maxRetries`（既定 2）をそのまま使うと 1 回目の試行だけで締切を超えうるので、transport は
-残り時間を connect / read のタイムアウトにし、backoff を挟む余裕が無ければ再試行しない。
-初回リクエストは TLS 確立込みで 3〜5 秒かかることがあるため、`shutdownTimeout` を短くすると
-その分クラッシュを取りこぼしやすくなる。
-
-**ディスクへの永続キューは持たない。** 時間内に送れなかったクラッシュは失われる。
-
-## R8 / ProGuard
-
-SDK 自身が動くための keep ルールは jar の `META-INF/proguard/monica-android.pro` に入れてあり、
-AGP が自動で読む。envelope の getter 名が難読化されると ingest が弾くため、model class と
-`SourceFile` / `LineNumberTable` を保持している。
-
-**難読化するアプリは、次の 1 行を自分の `proguard-rules.pro` に足す。** これは SDK からは配れない
-（アプリの package 名を SDK は知らない）。
-
-```
--keepnames class com.example.app.** { *; }   # inAppPackage() に渡す package と一致させる
+```bash
+gh auth refresh -s read:packages
 ```
 
-無いと、クラス名が `c6` になってアプリの frame が 1 つも `in_app` にならない。グルーピングが
-フレームワークの frame に落ちて、**同じクラッシュが OS ごと・ビルドごとに別 Issue になり、
-スタックも読めない**。`-keepnames` は名前だけ残して shrink と最適化は効かせる指定なので、
-APK サイズへの影響はほぼ無い。
+core を直してからここで確かめるには、先に core を publish する。
 
-ファイル名は気にしなくてよい。R8 は難読化時に SourceFile を必ず書き換える（既定は
-`r8-map-id-<ビルドごとのハッシュ>`、`-renamesourcefileattribute` を書けばその文字列）ので、
-SDK は **`.` を含まない SourceFile を「ファイル名無し」と見て**、残っているクラス名から
-`MainActivity.java` を導出する。`-renamesourcefileattribute` に何を書いても同じ扱いになる。
-
-**Kotlin の注意:** 難読化していないビルドは `MainActivity.kt`、難読化したビルドは導出した
-`MainActivity.java` が frame の filename になる。grouping は拡張子を潰さないので、同じクラッシュが
-debug と release で別 Issue になる。release だけを送るアプリでは問題にならない。
-
-## 公開契約
-
-protocol は言語に依存しない契約なので、この repository は持たない。MONICA が
-<https://spec.monica.accelhack.net/v1/> に配信しているものを取り込んだコピーが
-`spec/` にある。
-
-```text
-spec.lock.json   取り込んだ内容の記録（origin、version、revision、全ファイルの sha256）
-spec/v1/         取り込んだコピー（jar には入らない）
-```
-
-取り込みは script でやる。手で `spec/` を編集しても、次の取り込みで消える。
-Python 3 の標準ライブラリだけで動き、Maven の build には乗せない。
+### 公開契約（spec/）
 
 ```sh
 python3 scripts/spec-sync.py                 # 配信元から取り込み直す
@@ -290,51 +255,18 @@ python3 scripts/spec-sync.py --check         # 取り込んだコピーが spec.
 python3 scripts/spec-sync.py --check-remote  # さらに配信元が動いていないか
 ```
 
-起点は配信元の `index.json`。他の全ファイルのパスと sha256、バンドル全体の
-`revision` がそこに並んでいるので、**何を取り込むかは配信元が決める**。この
-repository は取り込む対象の一覧を持たない。
+取り込み先は `spec/v1/`、記録は `spec.lock.json`。手で `spec/` を編集しても次の取り込みで
+消える。契約テストは `src/test/java/com/accelhack/monica/android/EnvelopeContractTest.java`
+で、`mvn verify` の一部として走る。CI の `公開契約` job が `--check-remote` を毎日回す。
+落ちたら取り込み直し、`mvn verify` を通してから commit する。
 
-`revision` はバンドル全体の指紋（各ファイルの `"<sha256>  <path>"` を path の
-byte 順に改行で繋いだ文字列の sha256）で、版番号ではないので新旧や大小は読めない。
-`--check` はこれを `spec.lock.json` の `files` から再計算するので、`spec/` を
-書き換えて lock の digest を揃えただけの改竄も落ちる。
+### リリース
 
-契約テストは `src/test/java/com/accelhack/monica/android/EnvelopeContractTest.java`。
-`mvn verify` の一部として走り、spec が見つからないと skip せず失敗する。契約が
-変わったときに Android だけ気付けない状態を作らないため。見るのは 3 つ。
+1. `pom.xml` を `X.Y.Z-SNAPSHOT` にし、`MonicaAndroid.SDK_VERSION` を `X.Y.Z` に揃える
+   （契約テストが突き合わせる）
+2. main へ merge する
+3. その commit へ `vX.Y.Z` tag を付けて push する
 
-1. この SDK が実際に出す envelope が `envelope.json` の必須項目・pattern・enum・上限を
-   満たすこと。上限や語彙は schema から読むので、契約が締まればここが落ちる
-2. `sdk.name` が配布 registry の package 名（`com.accelhack.monica:monica-android`）で、
-   `sdk.version` が `pom.xml` の版と一致すること
-3. `HttpUrlConnectionTransport` の endpoint、public key のヘッダと prefix、https を
-   免除する host、Retry-After の上限、backoff の定数が `transport.json` と一致すること
-
-CI の `公開契約` job は `--check-remote` で配信元の `revision` を取り込み済みのものと
-比べる。落ちたら `python3 scripts/spec-sync.py` で取り込み直し、`mvn verify` を
-通してから commit する。schedule でも毎日回すので、契約が動けば PR を待たずに気付く。
-
-### まだ実装していない契約
-
-`transport.json` の `status` のうち、`413`（`split_and_retry`）は分割せず破棄する。
-`monica-core` が送信前に envelope を分割しているので、ingest が `413` を返す状況を
-作らないことで代えている。黙って取り残されないように、契約テストは
-`transport.json` の status の語彙を固定している。MONICA 側が status を増やすと、
-「この SDK が考慮していない契約が増えた」として落ちる。
-
-## Release
-
-開発中の POM は `X.Y.Z-SNAPSHOT` にする。`MonicaAndroid.SDK_VERSION` は同じ版にする
-（契約テストが `pom.xml` と突き合わせる）。
-
-対応する main commit へ `vX.Y.Z` tag を付けると `.github/workflows/maven-release.yml`
-が動く。この repository が出す artifact は `monica-android` 1 つなので、tag に artifact
-名の prefix は付けない。secret は要らない（`GITHUB_TOKEN` で公開できる）。
-
-workflow は tag と POM version の対応を検証し、release version へ一時変換してから、
-source / Javadoc jar を含む artifact をこの repository の GitHub Packages
-（<https://maven.pkg.github.com/Accel-Hack/monica-sdk-android>）へ公開する。
-
-## License
-
-Apache License 2.0。`LICENSE` を見る。
+`.github/workflows/maven-release.yml` が tag と POM version の対応を検証し、release
+version へ変換してから、source / Javadoc jar を含む artifact を
+<https://maven.pkg.github.com/Accel-Hack/monica-sdk-android> へ公開する。secret は要らない。
