@@ -46,8 +46,9 @@
     <maven.compiler.release>11</maven.compiler.release>
     <!--
       The published monica-core this integration is built against. It is not the reactor
-      version any more: monica-core is released from Accel-Hack/monica-sdk-java, so a fix
-      there has to be published before it can be verified here.
+      version any more: monica-core is released from Accel-Hack/monica-sdk-java to that
+      repository's GitHub Packages registry (see <repositories> below), so a fix there has
+      to be published before it can be verified here.
     -->
     <monica-core.version>0.1.1</monica-core.version>
     <junit.version>5.9.3</junit.version>
@@ -127,6 +128,28 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <!--
+    monica-core is not on Maven Central; it is published to the GitHub Packages registry of
+    Accel-Hack/monica-sdk-java. That registry rejects anonymous reads even for public
+    packages, so resolving it needs a <server> whose id matches the one below, holding a
+    token with read:packages. CI supplies it from .github/maven-settings.xml; locally it
+    goes in ~/.m2/settings.xml (README, "monica-core の解決").
+  -->
+  <repositories>
+    <repository>
+      <id>github-monica-sdk-java</id>
+      <name>monica-sdk-java on GitHub Packages</name>
+      <url>https://maven.pkg.github.com/Accel-Hack/monica-sdk-java</url>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+      <!-- Enabled so a core fix can be verified here from a SNAPSHOT, before its release. -->
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+    </repository>
+  </repositories>
 
   <build>
     <plugins>

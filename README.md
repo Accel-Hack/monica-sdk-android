@@ -19,8 +19,26 @@ mvn verify
 ```
 
 Java 11 で build する（Android の言語水準）。`monica-core` は別 repository
-（`Accel-Hack/monica-sdk-java`）から Maven Central へ公開されたものを使うので、
-core を直してからここで確かめるには、先に core を publish する必要がある。
+（`Accel-Hack/monica-sdk-java`）から公開されたものを使うので、core を直してから
+ここで確かめるには、先に core を publish する必要がある。
+
+### monica-core の解決
+
+`monica-core` は  `Accel-Hack/monica-sdk-java` の
+**GitHub Packages** にある。
+
+credential は `gh` から借りるので, gh auth tokenに`read:packages`の権限が必要。
+401でpackagesが取得できない場合は以下のコマンドで権限を追加する。
+
+```bash
+gh auth refresh -s read:packages
+```
+
+```bash
+export MONICA_PACKAGES_ACTOR="$(gh api user --jq .login)"
+export MONICA_PACKAGES_TOKEN="$(gh auth token)"
+mvn -s .github/maven-settings.xml verify
+```
 
 ## 導入
 
@@ -38,6 +56,31 @@ android {
     minSdk 26
   }
 }
+```
+
+`monica-core` は GitHub Packages にあるので、以下を `settings.gradle` に足す。
+
+```groovy
+dependencyResolutionManagement {
+  repositories {
+    mavenCentral()
+    maven {
+      url = uri('https://maven.pkg.github.com/Accel-Hack/monica-sdk-java')
+      credentials {
+        username = providers.environmentVariable('MONICA_PACKAGES_ACTOR').get()
+        password = providers.environmentVariable('MONICA_PACKAGES_TOKEN').get()
+      }
+    }
+  }
+}
+```
+
+credential は build 時に env から渡す。`read:packages` を持つ token なら何でもよい。
+未設定のまま build すると `Cannot query the value of this provider` で落ちる。
+
+```bash
+export MONICA_PACKAGES_ACTOR="$(gh api user --jq .login)"
+export MONICA_PACKAGES_TOKEN="$(gh auth token)"
 ```
 
 `minSdk 26` / AGP 7.0 以上。`monica-core` が `java.time`、`java.util.function`、

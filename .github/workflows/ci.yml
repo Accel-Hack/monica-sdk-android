@@ -28,6 +28,8 @@ concurrency:
 
 permissions:
   contents: read
+  # monica-core は Accel-Hack/monica-sdk-java の GitHub Packages から取る。
+  packages: read
 
 jobs:
   test:
@@ -52,7 +54,17 @@ jobs:
         # 契約テストも同じ照合をするが、こちらの方が落ちた理由が読みやすい。
         run: python3 scripts/spec-sync.py --check
 
-      - run: mvn --batch-mode --no-transfer-progress verify
+      - name: mvn verify
+        # GitHub Packages は package が public でも匿名 read を拒否するので、依存解決に
+        # token が要る。monica-core は public なので、job の permissions で packages:read
+        # を付けた GITHUB_TOKEN で足りる。
+        # fork からの PR には secret が渡らないため、そこでは 401 になる。
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          -s .github/maven-settings.xml verify
+        env:
+          MONICA_PACKAGES_ACTOR: ${{ github.actor }}
+          MONICA_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   spec:
     # 配信元を叩くので matrix から外してある。network の失敗で Java 2 版の

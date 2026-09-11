@@ -19,6 +19,8 @@ concurrency:
 
 permissions:
   contents: read
+  # monica-core は Accel-Hack/monica-sdk-java の GitHub Packages から取る。
+  packages: read
 
 jobs:
   publish:
@@ -38,16 +40,21 @@ jobs:
           java-version: "11"
           cache: maven
           cache-dependency-path: pom.xml
-          # setup-java v5 では credential 値ではなく、deploy step で設定する
-          # environment variable 名を以下の input へ渡す。
-          server-id: central
-          server-username: MAVEN_CENTRAL_USERNAME
-          server-password: MAVEN_CENTRAL_TOKEN
+          # server-* / gpg-passphrase input は使わない。setup-java が書く settings.xml は
+          # server を 1 つしか持てないが、この job は Maven Central へ出す server と
+          # monica-core を GitHub Packages から読む server の両方が要る。両方を書いた
+          # .github/maven-settings.xml を mvn へ渡す。input と同じく credential 値では
+          # なく environment variable 名を持つので、secret は step の env から渡る。
           gpg-private-key: ${{ secrets.MAVEN_GPG_PRIVATE_KEY }}
-          gpg-passphrase: MAVEN_GPG_PASSPHRASE
 
       - name: tag・main・POM versionを検証
         shell: bash
+        # ここの mvn は project の依存を解決しないが、settings は deploy step と揃えて
+        # おく。将来 goal が増えて monica-core を引いたときに、ここだけ 401 で落ちる
+        # 形にしないため。
+        env:
+          MONICA_PACKAGES_ACTOR: ${{ github.actor }}
+          MONICA_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           git fetch origin main
@@ -62,6 +69,7 @@ jobs:
             exit 1
           fi
           pom_version=$(mvn --batch-mode --no-transfer-progress \
+            -s .github/maven-settings.xml \
             help:evaluate -Dexpression=project.version -q -DforceStdout)
           if [[ "$pom_version" != "$tag_version-SNAPSHOT" ]]; then
             echo "::error::tag=$tag_version POM=$pom_version。POM を $tag_version-SNAPSHOT へ更新してください。"
@@ -69,14 +77,19 @@ jobs:
           fi
 
           mvn --batch-mode --no-transfer-progress \
+            -s .github/maven-settings.xml \
             org.codehaus.mojo:versions-maven-plugin:2.21.0:set \
             -DnewVersion="$tag_version" -DgenerateBackupPoms=false
 
       - name: 署名してMaven Centralへ公開
         run: >-
           mvn --batch-mode --no-transfer-progress
+          -s .github/maven-settings.xml
           -Pcentral-release deploy
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           MAVEN_CENTRAL_TOKEN: ${{ secrets.MAVEN_CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
+          # monica-core の解決用。ci.yml と同じ。
+          MONICA_PACKAGES_ACTOR: ${{ github.actor }}
+          MONICA_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
