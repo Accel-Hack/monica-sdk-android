@@ -83,8 +83,9 @@ dependencyResolutionManagement {
 }
 ```
 
-credential は build 時に env から渡す。`read:packages` を持つ token なら何でもよい。
-未設定のまま build すると `Cannot query the value of this provider` で落ちる。
+credential は build 時に env から渡す。手元では `gh` から借りる。**token を発行して
+置く方法は採らない。** 未設定のまま build すると
+`Cannot query the value of this provider` で落ちる。
 
 ```bash
 export MONICA_PACKAGES_ACTOR="$(gh api user --jq .login)"
