@@ -32,6 +32,25 @@
     <tag>HEAD</tag>
   </scm>
 
+  <!--
+    Published to this repository's own GitHub Packages registry. The registry is per
+    repository, so the URL carries owner/repo and the id differs from the one monica-core
+    is read from below. The release workflow supplies the credentials for both from
+    .github/maven-settings.xml.
+  -->
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>monica-sdk-android on GitHub Packages</name>
+      <url>https://maven.pkg.github.com/Accel-Hack/monica-sdk-android</url>
+    </repository>
+    <snapshotRepository>
+      <id>github</id>
+      <name>monica-sdk-android on GitHub Packages</name>
+      <url>https://maven.pkg.github.com/Accel-Hack/monica-sdk-android</url>
+    </snapshotRepository>
+  </distributionManagement>
+
   <licenses>
     <license>
       <name>Apache License, Version 2.0</name>
@@ -195,7 +214,7 @@
           </execution>
         </executions>
       </plugin>
-      <!-- Source and Javadoc jars are Maven Central publishing requirements. -->
+      <!-- Source and Javadoc jars, for the consumer's IDE. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-source-plugin</artifactId>
@@ -227,46 +246,4 @@
     </plugins>
   </build>
 
-  <profiles>
-    <!-- Signing and upload; only maven-release.yml activates this. -->
-    <profile>
-      <id>central-release</id>
-      <build>
-        <plugins>
-          <plugin>
-            <groupId>org.apache.maven.plugins</groupId>
-            <artifactId>maven-gpg-plugin</artifactId>
-            <version>3.2.8</version>
-            <executions>
-              <execution>
-                <id>sign-artifacts</id>
-                <phase>verify</phase>
-                <goals>
-                  <goal>sign</goal>
-                </goals>
-                <configuration>
-                  <bestPractices>true</bestPractices>
-                  <gpgArguments>
-                    <arg>--pinentry-mode</arg>
-                    <arg>loopback</arg>
-                  </gpgArguments>
-                </configuration>
-              </execution>
-            </executions>
-          </plugin>
-          <plugin>
-            <groupId>org.sonatype.central</groupId>
-            <artifactId>central-publishing-maven-plugin</artifactId>
-            <version>0.9.0</version>
-            <extensions>true</extensions>
-            <configuration>
-              <publishingServerId>central</publishingServerId>
-              <autoPublish>true</autoPublish>
-              <checksums>all</checksums>
-            </configuration>
-          </plugin>
-        </plugins>
-      </build>
-    </profile>
-  </profiles>
 </project>

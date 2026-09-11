@@ -9,7 +9,7 @@
 
   setup-java の server-id / server-username / server-password でも同じことはできるが、
   あちらは server を 1 つしか書けない。release workflow は monica-core を読むための
-  server と Maven Central へ出すための server の両方が要るので、ここへ集めてある。
+  server と monica-android を出すための server の両方が要るので、ここへ集めてある。
 -->
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -20,16 +20,14 @@
       <username>${env.MONICA_PACKAGES_ACTOR}</username>
       <password>${env.MONICA_PACKAGES_TOKEN}</password>
     </server>
-    <!-- 以下 2 つは maven-release.yml だけが使う。env が無い job では参照されない。 -->
+    <!--
+      公開先。maven-release.yml だけが使う。env が無い job では参照されない。
+      id は pom.xml の <distributionManagement> の id と一致させること。
+    -->
     <server>
-      <id>central</id>
-      <username>${env.MAVEN_CENTRAL_USERNAME}</username>
-      <password>${env.MAVEN_CENTRAL_TOKEN}</password>
-    </server>
-    <server>
-      <!-- maven-gpg-plugin の bestPractices=true はこの id から passphrase を読む。 -->
-      <id>gpg.passphrase</id>
-      <passphrase>${env.MAVEN_GPG_PASSPHRASE}</passphrase>
+      <id>github</id>
+      <username>${env.MONICA_PUBLISH_ACTOR}</username>
+      <password>${env.MONICA_PUBLISH_TOKEN}</password>
     </server>
   </servers>
 </settings>

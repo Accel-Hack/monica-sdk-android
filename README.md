@@ -58,12 +58,20 @@ android {
 }
 ```
 
-`monica-core` は GitHub Packages にあるので、以下を `settings.gradle` に足す。
+`monica-android` と `monica-core` は GitHub Packages にあるので、以下を
+`settings.gradle` に足す。registry は repository ごとなので、2 つ宣言する。
 
 ```groovy
 dependencyResolutionManagement {
   repositories {
     mavenCentral()
+    maven {
+      url = uri('https://maven.pkg.github.com/Accel-Hack/monica-sdk-android')
+      credentials {
+        username = providers.environmentVariable('MONICA_PACKAGES_ACTOR').get()
+        password = providers.environmentVariable('MONICA_PACKAGES_TOKEN').get()
+      }
+    }
     maven {
       url = uri('https://maven.pkg.github.com/Accel-Hack/monica-sdk-java')
       credentials {
@@ -318,13 +326,13 @@ CI の `公開契約` job は `--check-remote` で配信元の `revision` を取
 開発中の POM は `X.Y.Z-SNAPSHOT` にする。`MonicaAndroid.SDK_VERSION` は同じ版にする
 （契約テストが `pom.xml` と突き合わせる）。
 
-4 個の repository secret `MAVEN_CENTRAL_USERNAME`、`MAVEN_CENTRAL_TOKEN`、
-`MAVEN_GPG_PRIVATE_KEY`、`MAVEN_GPG_PASSPHRASE` を設定し、対応する main commit へ
-`vX.Y.Z` tag を付けると `.github/workflows/maven-release.yml` が動く。この repository
-が出す artifact は `monica-android` 1 つなので、tag に artifact 名の prefix は付けない。
+対応する main commit へ `vX.Y.Z` tag を付けると `.github/workflows/maven-release.yml`
+が動く。この repository が出す artifact は `monica-android` 1 つなので、tag に artifact
+名の prefix は付けない。secret は要らない（`GITHUB_TOKEN` で公開できる）。
 
 workflow は tag と POM version の対応を検証し、release version へ一時変換してから、
-source / Javadoc jar と GPG signature を含む artifact を Maven Central へ公開する。
+source / Javadoc jar を含む artifact をこの repository の GitHub Packages
+（<https://maven.pkg.github.com/Accel-Hack/monica-sdk-android>）へ公開する。
 
 ## License
 
