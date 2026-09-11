@@ -155,6 +155,7 @@ monica.setScreen("CheckoutFragment");
 | `release` | `versionName` | 未指定ならアプリの versionName |
 | `inAppPackage` | アプリの package 名 | frame の `in_app` 判定 |
 | `beforeSend` | なし | 送信前の最後の関門。PII の除去はここ |
+| `onDiagnostic` | logcat へ 1 行 | ingest が envelope を弾いた理由の受け取り先 |
 | `sampleRate` | `1.0` | |
 | `maxQueueSize` / `batchSize` | `100` / `30` | |
 | `maxBreadcrumbs` | `50` | 超えた分は古い順に落とす |
@@ -177,6 +178,47 @@ Activity 遷移は `ui.lifecycle` breadcrumb と `screen` tag に残す。値は
 判断できないので、`setUser()` と `beforeSend` で明示した値だけを送る。
 `AndroidCompatibilityTest` が、framework に触る唯一のクラスの constant pool に
 これらの API 名が無いことをビルドで確かめている。
+
+## ingest が envelope を弾いたとき
+
+transport は `429` を除く `4xx` のレスポンス body を `error.json` として読み、**`422` は既定で
+logcat の tag `MONICA` に 1 行出す。** `401` で送信を止めたときも同じ tag に 1 行出る。
+
+```text
+monica: ingest rejected the envelope with 422 (invalid_envelope): 1 issue(s); $.items[0].request.method: Invalid type: Expected string
+monica: ingest rejected the envelope with 401 (unauthorized); no further envelopes will be sent
+```
+
+`code` が読めなかったときは `(unknown)` になる。API key も envelope の中身も出さない。
+1 envelope につき 1 回で、再試行のたびには出さない。issues は 10 件までを行に並べ、超えた分は
+`; and N more` に丸める（`issues()` からは常に全件取れる）。
+
+プログラムから受け取るには `onDiagnostic` を渡す。**渡すと既定の logcat 行は出なくなる**ので、
+`onDiagnostic(d -> {})` が無効化にあたる。自前の listener には、既定が出さない `400` / `413` も届く。
+
+```java
+MonicaAndroidOptions.builder()
+    .onDiagnostic(diagnostic -> {
+      Log.w("MONICA", diagnostic.describe());          // 既定と同じ 1 行
+      for (MonicaDiagnostic.Issue issue : diagnostic.issues()) {
+        myOwnMetrics.count("monica.rejected", issue.path());
+      }
+    })
+```
+
+`MonicaDiagnostic` は `status()` / `code()` / `message()` / `issues()` / `stopped()` /
+`describe()` を持つ。`code()` は人が読む用なので、分岐は `status()` で行う。listener は sender
+thread の上で呼ばれるのでブロックしてはいけない。listener が投げた例外は握り潰す。
+
+body は 64 KiB まで読む。fatal を含む envelope では `shutdownTimeout` の残り時間で打ち切る。
+どちらに掛かっても例外にはならず、issues 無し（status だけ）の報告になる。
+
+`401`（`drop_and_stop`）は破棄した上で、**その transport から以後 POST しない。** 止まったことは
+上の logcat 行と `HttpUrlConnectionTransport#isStopped()` で分かる。送信を再開するには
+`MonicaAndroid.install()` をやり直す。
+
+`.transport()` で自分の transport を渡した場合、`onDiagnostic` は届かない。body を読むのは
+組み込みの `HttpUrlConnectionTransport` だけ。
 
 ## クラッシュ
 
@@ -265,10 +307,9 @@ CI の `公開契約` job は `--check-remote` で配信元の `revision` を取
 
 ### まだ実装していない契約
 
-`transport.json` の `status` のうち、`401`（`drop_and_stop`）は破棄するだけで以後の
-送信を止めない。`413`（`split_and_retry`）は分割せず破棄する。`monica-core` が送信前に
-envelope を分割しているので、ingest が `413` を返す状況を作らないことで代えている。
-`error.json` の body は読んでいない。黙って取り残されないように、契約テストは
+`transport.json` の `status` のうち、`413`（`split_and_retry`）は分割せず破棄する。
+`monica-core` が送信前に envelope を分割しているので、ingest が `413` を返す状況を
+作らないことで代えている。黙って取り残されないように、契約テストは
 `transport.json` の status の語彙を固定している。MONICA 側が status を増やすと、
 「この SDK が考慮していない契約が増えた」として落ちる。
 
