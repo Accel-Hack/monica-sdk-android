@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  workflow が `mvn -s .github/maven-settings.xml` で使う settings。credential は書かず、
+  environment variable 名だけを置く。実際の値は workflow の env で渡す。
+
+  monica-core は Accel-Hack/monica-sdk-java の GitHub Packages にあり、public な package
+  でも匿名 read を拒否されるので、この server が無いと build が 401 で落ちる。id は
+  pom.xml の <repositories> の id と一致させること。
+
+  setup-java の server-id / server-username / server-password でも同じことはできるが、
+  あちらは server を 1 つしか書けない。release workflow は monica-core を読むための
+  server と Maven Central へ出すための server の両方が要るので、ここへ集めてある。
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <servers>
+    <server>
+      <id>github-monica-sdk-java</id>
+      <username>${env.MONICA_PACKAGES_ACTOR}</username>
+      <password>${env.MONICA_PACKAGES_TOKEN}</password>
+    </server>
+    <!-- 以下 2 つは maven-release.yml だけが使う。env が無い job では参照されない。 -->
+    <server>
+      <id>central</id>
+      <username>${env.MAVEN_CENTRAL_USERNAME}</username>
+      <password>${env.MAVEN_CENTRAL_TOKEN}</password>
+    </server>
+    <server>
+      <!-- maven-gpg-plugin の bestPractices=true はこの id から passphrase を読む。 -->
+      <id>gpg.passphrase</id>
+      <passphrase>${env.MAVEN_GPG_PASSPHRASE}</passphrase>
+    </server>
+  </servers>
+</settings>
