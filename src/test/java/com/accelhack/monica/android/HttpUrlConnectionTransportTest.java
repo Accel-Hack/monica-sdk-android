@@ -491,8 +491,12 @@ class HttpUrlConnectionTransportTest {
         .getBytes(StandardCharsets.UTF_8);
     HttpUrlConnectionTransport transport = reporting(2);
 
-    assertFalse(transport.send(envelope("boom", "error")));
+    SendResult refused = transport.deliver(envelope("boom", "error"));
+    assertFalse(refused.isAccepted());
+    assertTrue(refused.isStopped(), "the result says so too, as lastSendResult() documents");
+    assertEquals(401, refused.getStatus().getAsInt());
     assertTrue(transport.isStopped());
+    assertTrue(transport.deliver(envelope("boom", "error")).isStopped(), "and keeps saying so");
     assertFalse(transport.send(envelope("boom", "error")), "a stopped transport accepts nothing");
     assertFalse(transport.send(envelope("crash", "fatal")), "not even a crash gets through");
 

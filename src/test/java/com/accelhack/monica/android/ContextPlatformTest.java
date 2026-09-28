@@ -1,6 +1,7 @@
 package com.accelhack.monica.android;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.ArrayList;
@@ -57,6 +58,47 @@ class ContextPlatformTest {
         (lifecycle, screen) -> { throw new IllegalStateException("listener bug"); });
     callbacks.onActivityResumed(null);
     callbacks.onActivityDestroyed(null);
+  }
+
+  @Test
+  void aRotationIsNoReturnToTheForeground() {
+    List<String> seen = new ArrayList<>();
+    ContextPlatform.LifecycleCallbacks callbacks = new ContextPlatform.LifecycleCallbacks(
+        (lifecycle, screen) -> { if ("foreground".equals(lifecycle)) seen.add(lifecycle); });
+
+    callbacks.onActivityStarted(null);
+    callbacks.stopped(true);            // the old Activity, torn down for the rotation
+    callbacks.onActivityStarted(null);  // the recreated one
+    assertEquals(1, seen.size());
+    callbacks.stopped(false);           // the count survived: this one reaches zero
+    callbacks.onActivityStarted(null);
+    assertEquals(2, seen.size());
+  }
+
+  @Test
+  void keepsThePresenceStateInSharedPreferences() {
+    FakeSharedPreferences preferences = new FakeSharedPreferences();
+    ContextPlatform.PreferencesPresenceStore store =
+        new ContextPlatform.PreferencesPresenceStore(preferences);
+    assertNull(store.getLastReportedAt(), "nothing stored reads as null, not 0");
+    assertNull(store.getIntervalMillis());
+    assertNull(store.getSampleRate());
+
+    store.setLastReportedAt(1_756_512_000_000L);
+    store.setIntervalMillis(3_600_000L);
+    store.setSampleRate(0.25);
+
+    assertEquals(1_756_512_000_000L, preferences.values.get(ContextPlatform.PRESENCE_LAST_REPORTED_AT));
+    assertEquals(3_600_000L, preferences.values.get(ContextPlatform.PRESENCE_INTERVAL_MILLIS));
+    assertEquals("0.25", preferences.values.get(ContextPlatform.PRESENCE_SAMPLE_RATE));
+    ContextPlatform.PreferencesPresenceStore reread =
+        new ContextPlatform.PreferencesPresenceStore(preferences);
+    assertEquals(1_756_512_000_000L, reread.getLastReportedAt());
+    assertEquals(3_600_000L, reread.getIntervalMillis());
+    assertEquals(0.25, reread.getSampleRate());
+
+    preferences.values.put(ContextPlatform.PRESENCE_SAMPLE_RATE, "not a number");
+    assertNull(reread.getSampleRate(), "a corrupted rate reads as nothing stored");
   }
 
   @Test

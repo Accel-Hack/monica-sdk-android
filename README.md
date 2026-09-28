@@ -188,7 +188,8 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 （`trigger: "start"`）を単独の envelope で送る。送るのは直近 1 日に `202` を受けた
 envelope が無いときだけで、プロセスを再起動しても間隔内なら送らない。設定項目は無く、
 間隔と間引き率は MONICA 側の project 設定で変わる。`trackScreens` が `false` でも
-フォアグラウンド復帰は見る。
+フォアグラウンド復帰は見る。プロセスが生きている間は、既存の送信 tick で 1 日 1 回
+`trigger: "interval"` も送るので、フォアグラウンドに出しっぱなしでも沈黙にならない。
 
 前回 `202` を受けた時刻と MONICA から届いた設定は、SharedPreferences
 `com.accelhack.monica.presence` の次のキーに持つ。

@@ -49,7 +49,8 @@ final class ContextPlatform implements AndroidPlatform {
 
   @Override
   public MonicaPresenceStore presenceStore() {
-    return new PreferencesPresenceStore(context);
+    return new PreferencesPresenceStore(
+        context.getSharedPreferences(PRESENCE_PREFERENCES, Context.MODE_PRIVATE));
   }
 
   @Override
@@ -136,6 +137,8 @@ final class ContextPlatform implements AndroidPlatform {
     private final ScreenListener listener;
     /** Callbacks arrive on the main thread, so a plain counter is enough. */
     private int started;
+    /** A stop for a rotation: the start of the recreated Activity is not a return. */
+    private boolean restarting;
 
     LifecycleCallbacks(ScreenListener listener) {
       this.listener = listener;
@@ -150,6 +153,10 @@ final class ContextPlatform implements AndroidPlatform {
     public void onActivityStarted(Activity activity) {
       // Started and stopped duplicate resumed and paused for breadcrumb purposes; they only
       // count, so the first start after none is a return to the foreground.
+      if (restarting) {
+        restarting = false;
+        return;
+      }
       if (started++ == 0) report("foreground", activity);
     }
 
@@ -166,6 +173,19 @@ final class ContextPlatform implements AndroidPlatform {
     @Override
     public void onActivityStopped(Activity activity) {
       // See onActivityStarted.
+      stopped(activity != null && activity.isChangingConfigurations());
+    }
+
+    /**
+     * Package-private because the compile stubs cannot construct an Activity. A stop for a
+     * configuration change keeps the count, so the recreated Activity's start is not taken
+     * for a return to the foreground.
+     */
+    void stopped(boolean changingConfigurations) {
+      if (changingConfigurations) {
+        restarting = true;
+        return;
+      }
       if (started > 0) started--;
     }
 
@@ -195,15 +215,10 @@ final class ContextPlatform implements AndroidPlatform {
    * kept as its decimal string.
    */
   static final class PreferencesPresenceStore implements MonicaPresenceStore {
-    private final Context context;
+    private final SharedPreferences preferences;
 
-    PreferencesPresenceStore(Context context) {
-      this.context = context;
-    }
-
-    /** The framework caches the instance, so asking each time costs a map lookup. */
-    private SharedPreferences preferences() {
-      return context.getSharedPreferences(PRESENCE_PREFERENCES, Context.MODE_PRIVATE);
+    PreferencesPresenceStore(SharedPreferences preferences) {
+      this.preferences = preferences;
     }
 
     @Override
@@ -213,7 +228,7 @@ final class ContextPlatform implements AndroidPlatform {
 
     @Override
     public void setLastReportedAt(long epochMillis) {
-      preferences().edit().putLong(PRESENCE_LAST_REPORTED_AT, epochMillis).apply();
+      preferences.edit().putLong(PRESENCE_LAST_REPORTED_AT, epochMillis).apply();
     }
 
     @Override
@@ -223,12 +238,12 @@ final class ContextPlatform implements AndroidPlatform {
 
     @Override
     public void setIntervalMillis(long intervalMillis) {
-      preferences().edit().putLong(PRESENCE_INTERVAL_MILLIS, intervalMillis).apply();
+      preferences.edit().putLong(PRESENCE_INTERVAL_MILLIS, intervalMillis).apply();
     }
 
     @Override
     public Double getSampleRate() {
-      String value = preferences().getString(PRESENCE_SAMPLE_RATE, null);
+      String value = preferences.getString(PRESENCE_SAMPLE_RATE, null);
       try {
         return value == null ? null : Double.valueOf(value);
       } catch (NumberFormatException ignored) {
@@ -238,11 +253,10 @@ final class ContextPlatform implements AndroidPlatform {
 
     @Override
     public void setSampleRate(double sampleRate) {
-      preferences().edit().putString(PRESENCE_SAMPLE_RATE, Double.toString(sampleRate)).apply();
+      preferences.edit().putString(PRESENCE_SAMPLE_RATE, Double.toString(sampleRate)).apply();
     }
 
     private Long readLong(String key) {
-      SharedPreferences preferences = preferences();
       return preferences.contains(key) ? preferences.getLong(key, 0) : null;
     }
   }

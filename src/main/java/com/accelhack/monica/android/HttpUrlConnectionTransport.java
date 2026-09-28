@@ -125,7 +125,8 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
   public SendResult deliver(MonicaEnvelope envelope) throws Exception {
     // drop_and_stop: after a refused key, a request can only be refused again, and on a
     // metered mobile connection every one of them is the user's data.
-    if (stopped) return SendResult.of(false);
+    // No request is made, so there is no status; the result still says sending has stopped.
+    if (stopped) return SendResult.rejected(0, null, null, null, true);
     byte[] body = gzip(mapper.writeValueAsBytes(envelope));
     long deadlineNanos = fatalDeadlineMillis > 0 && carriesFatal(envelope)
         ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(fatalDeadlineMillis)
@@ -162,7 +163,7 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
             connection = null;
             report(status, error);
           }
-          return SendResult.of(false, status);
+          return SendResult.rejected(status, null, null, null, status == 401);
         }
         if (attempt == maxRetries) return SendResult.of(false);
         Duration delay = status == 429
