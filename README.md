@@ -182,6 +182,23 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 
 未捕捉例外には、クラッシュしたスレッド名が `thread` tag に付く。
 
+## 稼働確認
+
+`install()` 時と、アプリがフォアグラウンドに戻ったときに、稼働確認の `client_report`
+（`trigger: "start"`）を単独の envelope で送る。送るのは直近 1 日に `202` を受けた
+envelope が無いときだけで、プロセスを再起動しても間隔内なら送らない。設定項目は無く、
+間隔と間引き率は MONICA 側の project 設定で変わる。`trackScreens` が `false` でも
+フォアグラウンド復帰は見る。
+
+前回 `202` を受けた時刻と MONICA から届いた設定は、SharedPreferences
+`com.accelhack.monica.presence` の次のキーに持つ。
+
+| キー | 型 | 内容 |
+| --- | --- | --- |
+| `last_reported_at` | `long` | 前回 `202` を受けた（または稼働確認を送った）時刻、epoch ミリ秒 |
+| `interval_ms` | `long` | `X-Monica-Presence-Interval-Ms` で届いた間隔 |
+| `sample_rate` | `String` | `X-Monica-Presence-Sample-Rate` で届いた間引き率 |
+
 `ANDROID_ID`、serial、IMEI、広告 ID、アカウント、位置情報、実ファイルパスは一切読まず、
 パーミッションを要求する API も呼ばない。個人に関する値は `setUser()` と `beforeSend`
 で明示したものだけが送られる。

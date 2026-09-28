@@ -3,22 +3,33 @@ package com.accelhack.monica.android;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import com.accelhack.monica.MonicaPresenceStore;
 
 /**
  * The only class that touches the Android framework. Everything it does is a read,
- * except for the one line it writes to logcat when the SDK swallows a failure.
+ * except for the one line it writes to logcat when the SDK swallows a failure and the
+ * presence heartbeat's state it keeps in {@code SharedPreferences}.
  */
 final class ContextPlatform implements AndroidPlatform {
   static final String LOG_TAG = "MONICA";
+  /** The {@code SharedPreferences} file and keys of the presence heartbeat (README). */
+  static final String PRESENCE_PREFERENCES = "com.accelhack.monica.presence";
+  static final String PRESENCE_LAST_REPORTED_AT = "last_reported_at";
+  static final String PRESENCE_INTERVAL_MILLIS = "interval_ms";
+  static final String PRESENCE_SAMPLE_RATE = "sample_rate";
 
+  private final Context context;
   private final Application application;
   private final AndroidEnvironment environment;
 
-  private ContextPlatform(Application application, AndroidEnvironment environment) {
+  private ContextPlatform(Context context, Application application,
+      AndroidEnvironment environment) {
+    this.context = context;
     this.application = application;
     this.environment = environment;
   }
@@ -28,7 +39,7 @@ final class ContextPlatform implements AndroidPlatform {
     Context applicationContext = context.getApplicationContext();
     Context source = applicationContext == null ? context : applicationContext;
     Application application = source instanceof Application ? (Application) source : null;
-    return new ContextPlatform(application, read(source));
+    return new ContextPlatform(source, application, read(source));
   }
 
   @Override
@@ -37,12 +48,18 @@ final class ContextPlatform implements AndroidPlatform {
   }
 
   @Override
+  public MonicaPresenceStore presenceStore() {
+    return new PreferencesPresenceStore(context);
+  }
+
+  @Override
   public AutoCloseable trackScreens(ScreenListener listener) {
     if (listener == null) return () -> { };
     if (application == null) {
       // ActivityLifecycleCallbacks live on the Application. Without one there is nothing
       // to register on, and the integrator should learn that instead of guessing.
-      warn("the Context has no Application, so Activity transitions are not tracked", null);
+      warn("the Context has no Application, so Activity transitions and returns to the"
+          + " foreground are not tracked", null);
       return () -> { };
     }
     Application.ActivityLifecycleCallbacks callbacks = new LifecycleCallbacks(listener);
@@ -117,6 +134,8 @@ final class ContextPlatform implements AndroidPlatform {
   /** Package-private so the lifecycle mapping can be tested without a device. */
   static final class LifecycleCallbacks implements Application.ActivityLifecycleCallbacks {
     private final ScreenListener listener;
+    /** Callbacks arrive on the main thread, so a plain counter is enough. */
+    private int started;
 
     LifecycleCallbacks(ScreenListener listener) {
       this.listener = listener;
@@ -129,7 +148,9 @@ final class ContextPlatform implements AndroidPlatform {
 
     @Override
     public void onActivityStarted(Activity activity) {
-      // Started and stopped duplicate resumed and paused for breadcrumb purposes.
+      // Started and stopped duplicate resumed and paused for breadcrumb purposes; they only
+      // count, so the first start after none is a return to the foreground.
+      if (started++ == 0) report("foreground", activity);
     }
 
     @Override
@@ -145,6 +166,7 @@ final class ContextPlatform implements AndroidPlatform {
     @Override
     public void onActivityStopped(Activity activity) {
       // See onActivityStarted.
+      if (started > 0) started--;
     }
 
     @Override
@@ -164,6 +186,64 @@ final class ContextPlatform implements AndroidPlatform {
       } catch (Throwable ignored) {
         // Breadcrumbs must never break the Activity lifecycle.
       }
+    }
+  }
+
+  /**
+   * The presence heartbeat's state in {@code SharedPreferences}. monica-core validates what
+   * it writes, so this only persists. {@code SharedPreferences} has no double, so the rate is
+   * kept as its decimal string.
+   */
+  static final class PreferencesPresenceStore implements MonicaPresenceStore {
+    private final Context context;
+
+    PreferencesPresenceStore(Context context) {
+      this.context = context;
+    }
+
+    /** The framework caches the instance, so asking each time costs a map lookup. */
+    private SharedPreferences preferences() {
+      return context.getSharedPreferences(PRESENCE_PREFERENCES, Context.MODE_PRIVATE);
+    }
+
+    @Override
+    public Long getLastReportedAt() {
+      return readLong(PRESENCE_LAST_REPORTED_AT);
+    }
+
+    @Override
+    public void setLastReportedAt(long epochMillis) {
+      preferences().edit().putLong(PRESENCE_LAST_REPORTED_AT, epochMillis).apply();
+    }
+
+    @Override
+    public Long getIntervalMillis() {
+      return readLong(PRESENCE_INTERVAL_MILLIS);
+    }
+
+    @Override
+    public void setIntervalMillis(long intervalMillis) {
+      preferences().edit().putLong(PRESENCE_INTERVAL_MILLIS, intervalMillis).apply();
+    }
+
+    @Override
+    public Double getSampleRate() {
+      String value = preferences().getString(PRESENCE_SAMPLE_RATE, null);
+      try {
+        return value == null ? null : Double.valueOf(value);
+      } catch (NumberFormatException ignored) {
+        return null;
+      }
+    }
+
+    @Override
+    public void setSampleRate(double sampleRate) {
+      preferences().edit().putString(PRESENCE_SAMPLE_RATE, Double.toString(sampleRate)).apply();
+    }
+
+    private Long readLong(String key) {
+      SharedPreferences preferences = preferences();
+      return preferences.contains(key) ? preferences.getLong(key, 0) : null;
     }
   }
 }

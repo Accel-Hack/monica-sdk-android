@@ -68,8 +68,10 @@
       version any more: monica-core is released from Accel-Hack/monica-sdk-java to that
       repository's GitHub Packages registry (see <repositories> below), so a fix there has
       to be published before it can be verified here.
+      0.2.0-SNAPSHOT is provisional: it carries the presence store and SendResult.accepted
+      that are not released yet. core の release 後に公開版へ置き換える。
     -->
-    <monica-core.version>0.1.1</monica-core.version>
+    <monica-core.version>0.2.0-SNAPSHOT</monica-core.version>
     <junit.version>5.9.3</junit.version>
     <!--
       Compile-only Android framework stubs. Every method throws at runtime, so the real

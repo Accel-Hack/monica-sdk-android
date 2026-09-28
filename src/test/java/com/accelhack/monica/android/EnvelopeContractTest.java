@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import com.accelhack.monica.MonicaTransport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
@@ -356,6 +357,119 @@ class EnvelopeContractTest {
     List<String> retryable = new ArrayList<>();
     for (JsonNode status : transportSpec.at("/retry/retryable_statuses")) retryable.add(status.asText());
     assertEquals(List.of("429", "5xx"), retryable);
+  }
+
+  // --- presence (client_report) ----------------------------------------------
+
+  /**
+   * Installs on a device whose store holds {@code prepare}'s values, flushes, and returns
+   * what was sent. The constants are monica-core's, so they are checked here by what the
+   * integration does with the values transport.json names.
+   */
+  private static RecordingTransport installOn(FakePlatform platform, RecordingTransport transport) {
+    MonicaAndroid monica = MonicaAndroid.install(platform,
+        MonicaAndroidOptions.builder()
+            .dsn("https://mpk_public@ingest.monica.test/1")
+            .environment("production")
+            .release("1.2.3")
+            .transport(transport)
+            .captureUncaughtExceptions(false)
+            .trackScreens(false)
+            .build());
+    try {
+      assertTrue(monica.flush(Duration.ofSeconds(2)));
+    } finally {
+      monica.close();
+    }
+    return transport;
+  }
+
+  private static JsonNode presence() {
+    return transportSpec.get("presence");
+  }
+
+  @Test
+  void theStartEnvelopePassesTheClientReportSchema() throws Exception {
+    RecordingTransport transport = installOn(new FakePlatform().neverReported(),
+        new RecordingTransport());
+    assertEquals(1, transport.envelopes().size());
+    JsonNode envelope = MAPPER.valueToTree(transport.envelopes().get(0));
+    for (JsonNode required : schema.get("required")) {
+      assertTrue(envelope.has(required.asText()), "envelope is missing " + required.asText());
+    }
+    assertEquals("com.accelhack.monica:monica-android", envelope.at("/sdk/name").asText());
+    assertEquals(1, envelope.get("items").size(), "a client_report travels alone");
+
+    JsonNode item = envelope.get("items").get(0);
+    JsonNode definition = schema.at("/$defs/clientReportItem");
+    for (JsonNode required : definition.get("required")) {
+      assertTrue(item.has(required.asText()), "client_report is missing " + required.asText());
+    }
+    JsonNode properties = definition.get("properties");
+    item.fieldNames().forEachRemaining(name ->
+        assertTrue(properties.has(name), name + " is not a client_report property"));
+    assertEquals(properties.at("/type/const").asText(), item.get("type").asText());
+    assertTrue(item.get("timestamp").asText().matches(properties.at("/timestamp/pattern").asText()));
+    assertWithin(properties.get("platform"), item.get("platform"));
+    assertEquals("java", item.get("platform").asText());
+    assertWithin(properties.get("environment"), item.get("environment"));
+    assertWithin(properties.get("trigger"), item.get("trigger"));
+    assertEquals("start", item.get("trigger").asText());
+    assertWithin(properties.get("release"), item.get("release"));
+  }
+
+  @Test
+  void readsTheOverrideHeadersTheContractNames() {
+    JsonNode headers = presence().get("override_headers");
+    assertEquals(headers.get("interval_ms").asText(), MonicaTransport.PRESENCE_INTERVAL_HEADER);
+    assertEquals(headers.get("sample_rate").asText(), MonicaTransport.PRESENCE_SAMPLE_RATE_HEADER);
+  }
+
+  @Test
+  void waitsTheDefaultIntervalTheContractNames() {
+    long interval = presence().get("interval_ms").asLong();
+    long now = System.currentTimeMillis();
+
+    FakePlatform inside = new FakePlatform().neverReported();
+    inside.presence().setLastReportedAt(now - interval + 60_000L);
+    assertTrue(installOn(inside, new RecordingTransport()).envelopes().isEmpty());
+
+    FakePlatform past = new FakePlatform().neverReported();
+    past.presence().setLastReportedAt(now - interval - 1_000L);
+    assertEquals(1, installOn(past, new RecordingTransport()).clientReports().size());
+  }
+
+  @Test
+  void keepsNoIntervalBelowTheContractsMinimum() {
+    long minimum = presence().get("min_interval_ms").asLong();
+    FakePlatform below = new FakePlatform().neverReported();
+    installOn(below, new RecordingTransport().presenceHeaders(Long.toString(minimum - 1), null));
+    assertEquals(null, below.presence().getIntervalMillis());
+
+    FakePlatform at = new FakePlatform().neverReported();
+    installOn(at, new RecordingTransport().presenceHeaders(Long.toString(minimum), null));
+    assertEquals(minimum, at.presence().getIntervalMillis());
+  }
+
+  @Test
+  void samplesOnlyInsideTheContractsRange() {
+    // The default rate is 1: an empty store always sends.
+    assertEquals(1.0, presence().get("sample_rate").asDouble());
+    assertEquals(1, installOn(new FakePlatform().neverReported(), new RecordingTransport())
+        .clientReports().size());
+
+    double minimum = presence().get("min_sample_rate").asDouble();
+    FakePlatform below = new FakePlatform().neverReported();
+    installOn(below, new RecordingTransport().presenceHeaders(null, "0.009"));
+    assertEquals(null, below.presence().getSampleRate());
+
+    FakePlatform at = new FakePlatform().neverReported();
+    installOn(at, new RecordingTransport().presenceHeaders(null, presence().get("min_sample_rate").asText()));
+    assertEquals(minimum, at.presence().getSampleRate());
+
+    FakePlatform above = new FakePlatform().neverReported();
+    installOn(above, new RecordingTransport().presenceHeaders(null, "1.5"));
+    assertEquals(null, above.presence().getSampleRate());
   }
 
   /** Enum or bounded string, whichever the schema uses for this property. */

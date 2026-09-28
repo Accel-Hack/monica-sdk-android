@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test;
 class UncaughtExceptionCaptureTest {
   @Test
   void handsTheCrashBackToThePreviousHandlerEvenWhenCaptureFails() {
-    MonicaClient client = MonicaClient.builder()
+    MonicaClient client = MonicaClient.builder().presenceStore(FakePlatform.alreadyReported())
         .environment("test")
         .transport(envelope -> { throw new IllegalStateException("transport is down"); })
         .build();
@@ -35,7 +35,7 @@ class UncaughtExceptionCaptureTest {
   @Test
   void withoutAPreviousHandlerTheCrashStillLeavesATrace() {
     RecordingTransport transport = new RecordingTransport();
-    MonicaClient client = MonicaClient.builder()
+    MonicaClient client = MonicaClient.builder().presenceStore(FakePlatform.alreadyReported())
         .environment("test")
         .transport(transport)
         .build();
@@ -60,7 +60,7 @@ class UncaughtExceptionCaptureTest {
   @Test
   void flushesBeforeDelegatingSoTheEventIsNotLostWithTheProcess() {
     RecordingTransport transport = new RecordingTransport();
-    MonicaClient client = MonicaClient.builder()
+    MonicaClient client = MonicaClient.builder().presenceStore(FakePlatform.alreadyReported())
         .environment("test")
         .transport(transport)
         // A slow periodic flush would hide a missing explicit one.
@@ -80,7 +80,7 @@ class UncaughtExceptionCaptureTest {
   @Test
   void givesUpOnASlowTransportAtTheTimeoutAndStillDelegates() throws Exception {
     CountDownLatch release = new CountDownLatch(1);
-    MonicaClient client = MonicaClient.builder()
+    MonicaClient client = MonicaClient.builder().presenceStore(FakePlatform.alreadyReported())
         .environment("test")
         .transport(envelope -> {
           release.await(10, TimeUnit.SECONDS);
@@ -109,7 +109,7 @@ class UncaughtExceptionCaptureTest {
 
   @Test
   void rejectsAnUnusableConfiguration() {
-    MonicaClient client = MonicaClient.builder().environment("test")
+    MonicaClient client = MonicaClient.builder().presenceStore(FakePlatform.alreadyReported()).environment("test")
         .transport(new RecordingTransport()).build();
     assertThrows(IllegalArgumentException.class,
         () -> new UncaughtExceptionCapture(null, null, Duration.ofSeconds(1)));

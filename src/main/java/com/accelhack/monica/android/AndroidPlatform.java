@@ -1,21 +1,33 @@
 package com.accelhack.monica.android;
 
 import android.content.Context;
+import com.accelhack.monica.MonicaPresenceStore;
 
 /**
  * Everything {@link MonicaAndroid} needs from the Android framework.
  *
  * <p>Keeping the framework behind this interface is what makes the integration
  * testable: the classes that decide <em>what</em> to send hold no android types, and
- * the one class that does — {@code ContextPlatform} — only reads values and writes to
- * the log.
+ * the one class that does — {@code ContextPlatform} — only reads values, writes to the
+ * log and keeps the presence heartbeat's state in {@code SharedPreferences}.
  */
 public interface AndroidPlatform {
   /** Device, OS and application facts read once at install time. */
   AndroidEnvironment environment();
 
   /**
-   * Starts reporting Activity transitions.
+   * Where the presence heartbeat ({@code client_report}) keeps the time of the last
+   * {@code 202} and the interval and sample rate MONICA sent back. The real platform keeps
+   * them in {@code SharedPreferences}, so a restart inside the interval sends nothing. The
+   * default is process memory, which a platform of the integrator's own gets.
+   */
+  default MonicaPresenceStore presenceStore() {
+    return MonicaPresenceStore.inMemory();
+  }
+
+  /**
+   * Starts reporting Activity transitions, and the return to the foreground as
+   * {@code foreground}.
    *
    * @return a handle that stops the reporting, never {@code null}
    */

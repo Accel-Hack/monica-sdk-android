@@ -28,10 +28,27 @@ class ContextPlatformTest {
     callbacks.onActivityStopped(null);
     callbacks.onActivityDestroyed(null);
 
-    // started/stopped and saveInstanceState are deliberately silent; a null Activity is
-    // named rather than dereferenced.
-    assertEquals(Arrays.asList("unknown.created", "unknown.resumed", "unknown.paused",
-        "unknown.destroyed"), seen);
+    // started/stopped are no breadcrumbs, only the first start is a return to the
+    // foreground; saveInstanceState is silent; a null Activity is named rather than
+    // dereferenced.
+    assertEquals(Arrays.asList("unknown.created", "unknown.foreground", "unknown.resumed",
+        "unknown.paused", "unknown.destroyed"), seen);
+  }
+
+  @Test
+  void reportsTheForegroundOnlyWhenTheFirstActivityStartsAfterNone() {
+    List<String> seen = new ArrayList<>();
+    ContextPlatform.LifecycleCallbacks callbacks = new ContextPlatform.LifecycleCallbacks(
+        (lifecycle, screen) -> { if ("foreground".equals(lifecycle)) seen.add(lifecycle); });
+
+    callbacks.onActivityStarted(null);
+    callbacks.onActivityStarted(null);  // a second Activity on top: still in the foreground
+    callbacks.onActivityStopped(null);
+    assertEquals(1, seen.size());
+    callbacks.onActivityStopped(null);  // the app went to the background
+    callbacks.onActivityStopped(null);  // an unmatched stop must not drive the count negative
+    callbacks.onActivityStarted(null);
+    assertEquals(2, seen.size());
   }
 
   @Test
