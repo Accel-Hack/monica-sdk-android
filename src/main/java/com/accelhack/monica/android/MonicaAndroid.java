@@ -143,8 +143,8 @@ public final class MonicaAndroid implements AutoCloseable {
       }
       MonicaAndroid installed = new MonicaAndroid(client, platform, options.flushTimeout(), capture,
           options.trackScreens());
-      // Registered even without trackScreens: the return to the foreground is when the
-      // presence heartbeat is checked, and that is not a breadcrumb setting.
+      // Registered even without trackScreens: the foreground and background switch the
+      // presence heartbeat, and that is not a breadcrumb setting.
       try {
         installed.screenTracking = platform.trackScreens(installed::onScreen);
       } catch (Throwable failure) {
@@ -339,8 +339,14 @@ public final class MonicaAndroid implements AutoCloseable {
   private void onScreen(String lifecycle, String screen) {
     try {
       if (closed || client == null) return;
+      // Android 15+ cuts a background app off the network, so a heartbeat tried there would
+      // fail and still use up the interval. The platform reports the background at install.
+      if ("background".equals(lifecycle)) {
+        client.setPresenceSuspended(true);
+        return;
+      }
       if ("foreground".equals(lifecycle)) {
-        // The process start is covered by the client's own start heartbeat.
+        client.setPresenceSuspended(false);
         client.checkPresence();
         return;
       }

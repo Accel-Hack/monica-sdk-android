@@ -63,8 +63,10 @@ final class ContextPlatform implements AndroidPlatform {
           + " foreground are not tracked", null);
       return () -> { };
     }
-    Application.ActivityLifecycleCallbacks callbacks = new LifecycleCallbacks(listener);
+    LifecycleCallbacks callbacks = new LifecycleCallbacks(listener);
     application.registerActivityLifecycleCallbacks(callbacks);
+    // install() runs in Application#onCreate, before any Activity has started.
+    callbacks.report("background", null);
     return () -> application.unregisterActivityLifecycleCallbacks(callbacks);
   }
 
@@ -179,14 +181,14 @@ final class ContextPlatform implements AndroidPlatform {
     /**
      * Package-private because the compile stubs cannot construct an Activity. A stop for a
      * configuration change keeps the count, so the recreated Activity's start is not taken
-     * for a return to the foreground.
+     * for a return to the foreground. The last stop is reported as {@code background}.
      */
     void stopped(boolean changingConfigurations) {
       if (changingConfigurations) {
         restarting = true;
         return;
       }
-      if (started > 0) started--;
+      if (started > 0 && --started == 0) report("background", null);
     }
 
     @Override
@@ -199,7 +201,7 @@ final class ContextPlatform implements AndroidPlatform {
       report("destroyed", activity);
     }
 
-    private void report(String lifecycle, Activity activity) {
+    void report(String lifecycle, Activity activity) {
       try {
         listener.onScreen(lifecycle, activity == null ? "unknown"
             : activity.getClass().getSimpleName());

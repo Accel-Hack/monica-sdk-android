@@ -26,8 +26,9 @@ public interface AndroidPlatform {
   }
 
   /**
-   * Starts reporting Activity transitions, and the return to the foreground as
-   * {@code foreground}.
+   * Starts reporting Activity transitions, the return to the foreground as
+   * {@code foreground} and the lack of a started Activity as {@code background}. A platform
+   * that reports neither leaves the presence heartbeat running as a server's would.
    *
    * @return a handle that stops the reporting, never {@code null}
    */

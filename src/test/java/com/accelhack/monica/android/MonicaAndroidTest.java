@@ -588,6 +588,36 @@ class MonicaAndroidTest {
   }
 
   @Test
+  void theBackgroundSuspendsTheHeartbeatUntilTheNextReturnToTheForeground() throws Exception {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform();
+    MonicaAndroid monica = MonicaAndroid.install(platform,
+        options(transport).flushInterval(Duration.ofMillis(20)).build());
+
+    // Due, but in the background: neither the ticks nor the stored time move.
+    platform.emit("background", "unknown");
+    long due = System.currentTimeMillis() - TWO_DAYS;
+    platform.presence().setLastReportedAt(due);
+    Thread.sleep(200);
+    assertTrue(transport.envelopes().isEmpty(), "no heartbeat while the network is cut off");
+    assertEquals(due, platform.presence().getLastReportedAt());
+
+    // A tick can win the race with checkPresence() and send it as interval: one either way.
+    platform.emit("foreground", "MainActivity");
+    Thread.sleep(200);
+    assertEquals(1, transport.clientReports().size());
+
+    platform.emit("background", "unknown");
+    platform.presence().setLastReportedAt(System.currentTimeMillis() - TWO_DAYS);
+    Thread.sleep(200);
+    assertEquals(1, transport.clientReports().size());
+
+    platform.emit("foreground", "MainActivity");
+    Thread.sleep(200);
+    assertEquals(2, transport.clientReports().size());
+  }
+
+  @Test
   void theForegroundIsNoBreadcrumb() {
     RecordingTransport transport = new RecordingTransport();
     FakePlatform platform = new FakePlatform();

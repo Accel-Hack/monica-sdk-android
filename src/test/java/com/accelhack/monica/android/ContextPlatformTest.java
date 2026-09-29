@@ -30,10 +30,10 @@ class ContextPlatformTest {
     callbacks.onActivityDestroyed(null);
 
     // started/stopped are no breadcrumbs, only the first start is a return to the
-    // foreground; saveInstanceState is silent; a null Activity is named rather than
-    // dereferenced.
+    // foreground and the last stop the background; saveInstanceState is silent; a null
+    // Activity is named rather than dereferenced.
     assertEquals(Arrays.asList("unknown.created", "unknown.foreground", "unknown.resumed",
-        "unknown.paused", "unknown.destroyed"), seen);
+        "unknown.paused", "unknown.background", "unknown.destroyed"), seen);
   }
 
   @Test
@@ -73,6 +73,27 @@ class ContextPlatformTest {
     callbacks.stopped(false);           // the count survived: this one reaches zero
     callbacks.onActivityStarted(null);
     assertEquals(2, seen.size());
+  }
+
+  @Test
+  void reportsTheBackgroundOnlyWhenTheLastStartedActivityStops() {
+    List<String> seen = new ArrayList<>();
+    ContextPlatform.LifecycleCallbacks callbacks = new ContextPlatform.LifecycleCallbacks(
+        (lifecycle, screen) -> {
+          if ("foreground".equals(lifecycle) || "background".equals(lifecycle)) seen.add(lifecycle);
+        });
+
+    callbacks.onActivityStarted(null);
+    callbacks.onActivityStarted(null);  // a second Activity on top
+    callbacks.stopped(false);           // one is still started
+    callbacks.stopped(true);            // the other rotates: no switch either way
+    callbacks.onActivityStarted(null);
+    assertEquals(Arrays.asList("foreground"), seen);
+    callbacks.stopped(false);
+    assertEquals(Arrays.asList("foreground", "background"), seen);
+    callbacks.stopped(false);           // unmatched: no second background
+    callbacks.onActivityStarted(null);
+    assertEquals(Arrays.asList("foreground", "background", "foreground"), seen);
   }
 
   @Test

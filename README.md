@@ -101,7 +101,8 @@ public final class ExampleApp extends Application {
 
 DSN は public key（`mpk_`）を含むものだけを受け付ける。`msk_` を渡すと SDK は無効に
 なり、何も送らない（理由は logcat の tag `MONICA` に出る）。DSN の scheme は `https`
-（`localhost` / `127.0.0.1` のみ例外）。
+（`localhost` / `127.0.0.1` のみ例外）。`http://localhost` の DSN を使う場合は、
+targetSdk 28 以降で `android:usesCleartextTraffic="true"` が要る。
 
 ## 使い方
 
@@ -192,15 +193,19 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
   error の envelope が `202` を受けても期限は延びる。1 回送ったら、成否によらず次は
   1 間隔後まで送らない
 - **判定する時点**:
-  - `install()` 時（`trigger: "start"`）
   - アプリのフォアグラウンド復帰（`trigger: "start"`）。started な Activity が 0 から 1 に
-    なったときで、画面回転などの構成変更は数えない。`trackScreens` が `false` でも見る
-  - `flushInterval` ごとの送信 tick（`trigger: "interval"`）。プロセスが生きている間は
-    バックグラウンドでも見る。送信待ちの event があるときは送らない
+    なったときで、画面回転などの構成変更は数えない。`trackScreens` が `false` でも見る。
+    起動直後の判定もここで行うので、プロセスがバックグラウンドで起動した場合は
+    フォアグラウンドに出るまで送らない
+  - フォアグラウンド中の `flushInterval` ごとの送信 tick（`trigger: "interval"`）。
+    フォアグラウンドに出しっぱなしでも間隔（既定 1 日）ごとに送る。送信待ちの event が
+    あるときは送らない
+  - バックグラウンド中（started な Activity が 0）は判定を止める。OS が network を遮断する
+    ため
   - `close()` やプロセス終了のときには送らない
 - **状態の置き場所**: SharedPreferences `com.accelhack.monica.presence` に次のキーで持つ。
   書き込みは `apply()` なので、プロセスが kill された直後の分は失われることがある（次の
-  `install()` で 1 通余分に送るだけ）。プロセスを再起動しても間隔内なら送らない
+  起動で 1 通余分に送るだけ）。プロセスを再起動しても間隔内なら送らない
 
   | キー | 型 | 内容 |
   | --- | --- | --- |
