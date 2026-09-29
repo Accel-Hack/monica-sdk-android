@@ -1,5 +1,6 @@
 package com.accelhack.monica.android;
 
+import com.accelhack.monica.MonicaPresenceStore;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -12,6 +13,11 @@ final class FakePlatform implements AndroidPlatform {
   private final List<ScreenListener> listeners = new ArrayList<>();
   private final List<String> warnings = Collections.synchronizedList(new ArrayList<>());
   private boolean failTracking;
+  /**
+   * Starts out as a device that reported a moment ago, so the start heartbeat stays out of
+   * the tests that are about errors; {@link #neverReported()} is the fresh install.
+   */
+  private MemoryPresenceStore presence = alreadyReported();
 
   FakePlatform() {
     this("com.example.app");
@@ -43,8 +49,29 @@ final class FakePlatform implements AndroidPlatform {
   }
 
   @Override
+  public MonicaPresenceStore presenceStore() {
+    return presence;
+  }
+
+  @Override
   public void warn(String message, Throwable failure) {
     warnings.add(message + (failure == null ? "" : ": " + failure));
+  }
+
+  FakePlatform neverReported() {
+    presence = new MemoryPresenceStore();
+    return this;
+  }
+
+  MemoryPresenceStore presence() {
+    return presence;
+  }
+
+  /** For clients built without a platform, which would otherwise send a start first. */
+  static MemoryPresenceStore alreadyReported() {
+    MemoryPresenceStore store = new MemoryPresenceStore();
+    store.setLastReportedAt(System.currentTimeMillis());
+    return store;
   }
 
   FakePlatform failTracking() {
@@ -62,5 +89,42 @@ final class FakePlatform implements AndroidPlatform {
 
   void emit(String lifecycle, String screen) {
     for (ScreenListener listener : new ArrayList<>(listeners)) listener.onScreen(lifecycle, screen);
+  }
+
+  /** SharedPreferences in memory: all three values, the sample rate included. */
+  static final class MemoryPresenceStore implements MonicaPresenceStore {
+    volatile Long lastReportedAt;
+    volatile Long intervalMillis;
+    volatile Double sampleRate;
+
+    @Override
+    public Long getLastReportedAt() {
+      return lastReportedAt;
+    }
+
+    @Override
+    public void setLastReportedAt(long epochMillis) {
+      lastReportedAt = epochMillis;
+    }
+
+    @Override
+    public Long getIntervalMillis() {
+      return intervalMillis;
+    }
+
+    @Override
+    public void setIntervalMillis(long value) {
+      intervalMillis = value;
+    }
+
+    @Override
+    public Double getSampleRate() {
+      return sampleRate;
+    }
+
+    @Override
+    public void setSampleRate(double value) {
+      sampleRate = value;
+    }
   }
 }

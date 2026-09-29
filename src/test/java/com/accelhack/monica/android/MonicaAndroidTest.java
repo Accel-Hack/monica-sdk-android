@@ -533,4 +533,160 @@ class MonicaAndroidTest {
     List<Map<String, Object>> values = (List<Map<String, Object>>) exception.get("values");
     return (Map<String, Object>) values.get(0).get("mechanism");
   }
+
+  // --- presence heartbeat ---------------------------------------------------
+
+  private static final long TWO_DAYS = 2 * 86_400_000L;
+
+  @Test
+  void aFreshInstallSendsAStartReportAloneInItsEnvelopeOnTheFirstForeground() {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform().neverReported();
+    MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
+    monica.captureMessage("boom");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    MonicaEvent report = transport.envelopes().get(0).getItems().get(0);
+    assertEquals(1, transport.envelopes().get(0).getItems().size(), "never mixed with errors");
+    assertEquals("client_report", report.get("type"));
+    assertEquals("start", report.get("trigger"));
+    assertEquals("java", report.get("platform"));
+    assertEquals("test", report.get("environment"));
+    assertEquals("2.3.1", report.get("release"));
+    assertEquals(1, transport.clientReports().size());
+  }
+
+  @Test
+  void aRestartInsideTheIntervalSendsNothing() {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform().neverReported();
+    platform.presence().setLastReportedAt(System.currentTimeMillis() - 3_600_000L);
+    MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    assertTrue(transport.envelopes().isEmpty());
+  }
+
+  @Test
+  void nothingIsSentBeforeTheFirstForegroundEvenWhenTicksRun() throws Exception {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform().neverReported();
+    MonicaAndroid.install(platform,
+        options(transport).flushInterval(Duration.ofMillis(20)).build());
+    Thread.sleep(200);
+
+    assertTrue(transport.envelopes().isEmpty(), "a process started in the background waits");
+    assertNull(platform.presence().getLastReportedAt());
+  }
+
+  @Test
+  void withoutLifecycleTrackingTheStartGoesOutAtInstall() {
+    RecordingTransport transport = new RecordingTransport();
+    MonicaAndroid monica = MonicaAndroid.install(new FakePlatform().neverReported().failTracking(),
+        options(transport).build());
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    assertEquals("start", transport.only().get("trigger"));
+  }
+
+  @Test
+  void returningToTheForegroundSendsAStartOnceTheIntervalHasPassed() {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform();
+    // trackScreens is off: the foreground check does not depend on breadcrumbs.
+    MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    assertTrue(platform.tracking());
+
+    platform.emit("foreground", "MainActivity");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+    assertTrue(transport.envelopes().isEmpty(), "reported a moment ago, so not due");
+
+    platform.presence().setLastReportedAt(System.currentTimeMillis() - TWO_DAYS);
+    platform.emit("foreground", "MainActivity");
+    platform.emit("foreground", "MainActivity");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+    assertEquals(1, transport.envelopes().size(), "the first check moves the time forward");
+    assertEquals("start", transport.only().get("trigger"));
+  }
+
+  @Test
+  void theBackgroundSuspendsTheHeartbeatUntilTheNextReturnToTheForeground() throws Exception {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform();
+    MonicaAndroid monica = MonicaAndroid.install(platform,
+        options(transport).flushInterval(Duration.ofMillis(20)).build());
+
+    // Due, but in the background: neither the ticks nor the stored time move.
+    platform.emit("background", "unknown");
+    long due = System.currentTimeMillis() - TWO_DAYS;
+    platform.presence().setLastReportedAt(due);
+    Thread.sleep(200);
+    assertTrue(transport.envelopes().isEmpty(), "no heartbeat while the network is cut off");
+    assertEquals(due, platform.presence().getLastReportedAt());
+
+    platform.emit("foreground", "MainActivity");
+    Thread.sleep(200);
+    assertEquals(1, transport.clientReports().size());
+    assertEquals("start", transport.clientReports().get(0).get("trigger"),
+        "checkPresence() lifts the suspension itself, so no tick sends it as interval");
+
+    platform.emit("background", "unknown");
+    platform.presence().setLastReportedAt(System.currentTimeMillis() - TWO_DAYS);
+    Thread.sleep(200);
+    assertEquals(1, transport.clientReports().size());
+
+    platform.emit("foreground", "MainActivity");
+    Thread.sleep(200);
+    assertEquals(2, transport.clientReports().size());
+    assertEquals("start", transport.clientReports().get(1).get("trigger"));
+  }
+
+  @Test
+  void theForegroundIsNoBreadcrumb() {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform();
+    MonicaAndroid monica = MonicaAndroid.install(platform,
+        options(transport).trackScreens(true).build());
+
+    platform.emit("foreground", "MainActivity");
+    monica.captureMessage("boom");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    assertNull(transport.only().get("breadcrumbs"));
+  }
+
+  @Test
+  void keepsThePresenceHeadersOfA202InTheDeviceStore() {
+    RecordingTransport transport = new RecordingTransport().presenceHeaders("3600000", "0.5");
+    FakePlatform platform = new FakePlatform().neverReported();
+    MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    assertEquals(3_600_000L, platform.presence().getIntervalMillis());
+    assertEquals(0.5, platform.presence().getSampleRate());
+    assertNotNull(platform.presence().getLastReportedAt());
+
+    // A 202 without the headers leaves what MONICA set; a broken value is ignored.
+    transport.presenceHeaders("1e6", null);
+    monica.captureMessage("boom");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+    assertEquals(3_600_000L, platform.presence().getIntervalMillis());
+    assertEquals(0.5, platform.presence().getSampleRate());
+  }
+
+  @Test
+  void theStoredIntervalDecidesWhenTheNextStartIsDue() {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform();
+    platform.presence().setIntervalMillis(60_000L);
+    platform.presence().setLastReportedAt(System.currentTimeMillis() - 120_000L);
+    MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    assertEquals("start", transport.only().get("trigger"), "two minutes is past a one-minute interval");
+  }
 }

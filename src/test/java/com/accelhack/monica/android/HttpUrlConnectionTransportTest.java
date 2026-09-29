@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.accelhack.monica.MonicaClient;
 import com.accelhack.monica.MonicaEnvelope;
 import com.accelhack.monica.MonicaEvent;
+import com.accelhack.monica.MonicaTransport;
+import com.accelhack.monica.SendResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
@@ -42,6 +44,8 @@ class HttpUrlConnectionTransportTest {
   private volatile int bodyBytes;
   private volatile byte[] errorBody;
   private volatile boolean trickleBody;
+  private volatile String presenceInterval;
+  private volatile String presenceSampleRate;
 
   @BeforeEach
   void start() throws Exception {
@@ -88,6 +92,13 @@ class HttpUrlConnectionTransportTest {
     int[] programmed = index < responses.size() ? responses.get(index) : new int[] {202, -1};
     if (programmed[1] >= 0) {
       exchange.getResponseHeaders().add("Retry-After", String.valueOf(programmed[1]));
+    }
+    if (presenceInterval != null) {
+      exchange.getResponseHeaders().add(MonicaTransport.PRESENCE_INTERVAL_HEADER, presenceInterval);
+    }
+    if (presenceSampleRate != null) {
+      exchange.getResponseHeaders().add(MonicaTransport.PRESENCE_SAMPLE_RATE_HEADER,
+          presenceSampleRate);
     }
     if (programmed[0] >= 300 && programmed[0] < 400) {
       exchange.getResponseHeaders().add("Location", "http://127.0.0.1:"
@@ -169,7 +180,7 @@ class HttpUrlConnectionTransportTest {
   }
 
   private static MonicaClient client(HttpUrlConnectionTransport transport) {
-    return MonicaClient.builder()
+    return MonicaClient.builder().presenceStore(FakePlatform.alreadyReported())
         .environment("test")
         .transport(transport)
         .flushInterval(Duration.ofHours(1))
@@ -192,6 +203,29 @@ class HttpUrlConnectionTransportTest {
     JsonNode envelope = new ObjectMapper().readTree(gunzip(request.body));
     assertEquals("com.accelhack.monica:monica-core", envelope.get("sdk").get("name").asText());
     assertEquals("boom", envelope.get("items").get(0).get("message").asText());
+  }
+
+  @Test
+  void handsThePresenceHeadersOfA2xxBackUnparsed() throws Exception {
+    respondWith(new int[] {202, -1}, new int[] {202, -1}, new int[] {400, -1});
+    presenceInterval = "3600000";
+    presenceSampleRate = "0.5";
+    HttpUrlConnectionTransport transport = new HttpUrlConnectionTransport(dsn(), 0,
+        Duration.ofSeconds(5));
+
+    SendResult accepted = transport.deliver(envelope("boom", "error"));
+    assertTrue(accepted.isAccepted());
+    assertEquals("3600000", accepted.getPresenceIntervalMs());
+    assertEquals("0.5", accepted.getPresenceSampleRate());
+
+    presenceInterval = null;
+    presenceSampleRate = null;
+    SendResult bare = transport.deliver(envelope("boom", "error"));
+    assertTrue(bare.isAccepted());
+    assertEquals(null, bare.getPresenceIntervalMs());
+    SendResult rejected = transport.deliver(envelope("boom", "error"));
+    assertFalse(rejected.isAccepted());
+    assertEquals(400, rejected.getStatus().getAsInt());
   }
 
   @Test
@@ -457,8 +491,12 @@ class HttpUrlConnectionTransportTest {
         .getBytes(StandardCharsets.UTF_8);
     HttpUrlConnectionTransport transport = reporting(2);
 
-    assertFalse(transport.send(envelope("boom", "error")));
+    SendResult refused = transport.deliver(envelope("boom", "error"));
+    assertFalse(refused.isAccepted());
+    assertTrue(refused.isStopped(), "the result says so too, as lastSendResult() documents");
+    assertEquals(401, refused.getStatus().getAsInt());
     assertTrue(transport.isStopped());
+    assertTrue(transport.deliver(envelope("boom", "error")).isStopped(), "and keeps saying so");
     assertFalse(transport.send(envelope("boom", "error")), "a stopped transport accepts nothing");
     assertFalse(transport.send(envelope("crash", "fatal")), "not even a crash gets through");
 

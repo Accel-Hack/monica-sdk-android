@@ -3,6 +3,7 @@ package com.accelhack.monica.android;
 import com.accelhack.monica.MonicaEnvelope;
 import com.accelhack.monica.MonicaEvent;
 import com.accelhack.monica.MonicaTransport;
+import com.accelhack.monica.SendResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
@@ -113,16 +114,26 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
 
   @Override
   public boolean send(MonicaEnvelope envelope) throws Exception {
+    return deliver(envelope).isAccepted();
+  }
+
+  /**
+   * Sends one envelope. A 2xx carries the raw presence headers back to the client, which
+   * validates them and keeps them in its presence store.
+   */
+  @Override
+  public SendResult deliver(MonicaEnvelope envelope) throws Exception {
     // drop_and_stop: after a refused key, a request can only be refused again, and on a
     // metered mobile connection every one of them is the user's data.
-    if (stopped) return false;
+    // No request is made, so there is no status; the result still says sending has stopped.
+    if (stopped) return SendResult.rejected(0, null, null, null, true);
     byte[] body = gzip(mapper.writeValueAsBytes(envelope));
     long deadlineNanos = fatalDeadlineMillis > 0 && carriesFatal(envelope)
         ? System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(fatalDeadlineMillis)
         : Long.MAX_VALUE;
     for (int attempt = 0; attempt <= maxRetries; attempt++) {
       int timeout = attemptTimeoutMillis(deadlineNanos);
-      if (timeout <= 0) return false;
+      if (timeout <= 0) return SendResult.of(false);
       HttpURLConnection connection = null;
       boolean reusable = false;
       try {
@@ -135,7 +146,8 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
         int status = connection.getResponseCode();
         if (status >= 200 && status < 300) {
           reusable = true;
-          return true;
+          return SendResult.accepted(status, connection.getHeaderField(PRESENCE_INTERVAL_HEADER),
+              connection.getHeaderField(PRESENCE_SAMPLE_RATE_HEADER));
         }
         // 3xx is not followed (the key must not travel to another host) and 4xx other
         // than 429 will not get better; both are dropped. Anything below 200, including
@@ -151,36 +163,36 @@ public final class HttpUrlConnectionTransport implements MonicaTransport {
             connection = null;
             report(status, error);
           }
-          return false;
+          return SendResult.rejected(status, null, null, null, status == 401);
         }
-        if (attempt == maxRetries) return false;
+        if (attempt == maxRetries) return SendResult.of(false);
         Duration delay = status == 429
             ? retryAfter(connection.getHeaderField("Retry-After"), attempt)
             : backoff(attempt);
-        if (!fitsBefore(delay, deadlineNanos)) return false;
+        if (!fitsBefore(delay, deadlineNanos)) return SendResult.of(false);
         release(connection, false);
         connection = null;
         Thread.sleep(delay.toMillis());
       } catch (InterruptedException interrupted) {
         Thread.currentThread().interrupt();
-        return false;
+        return SendResult.of(false);
       } catch (Exception failure) {
-        if (attempt == maxRetries) return false;
+        if (attempt == maxRetries) return SendResult.of(false);
         Duration delay = backoff(attempt);
-        if (!fitsBefore(delay, deadlineNanos)) return false;
+        if (!fitsBefore(delay, deadlineNanos)) return SendResult.of(false);
         release(connection, false);
         connection = null;
         try {
           Thread.sleep(delay.toMillis());
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
-          return false;
+          return SendResult.of(false);
         }
       } finally {
         release(connection, reusable);
       }
     }
-    return false;
+    return SendResult.of(false);
   }
 
   private void configure(HttpURLConnection connection, int contentLength, int timeout)

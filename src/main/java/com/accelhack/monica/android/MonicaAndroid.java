@@ -35,10 +35,10 @@ import java.util.Map;
  */
 public final class MonicaAndroid implements AutoCloseable {
   static final String SDK_NAME = "com.accelhack.monica:monica-android";
-  static final String SDK_VERSION = "0.1.0";
+  static final String SDK_VERSION = "0.2.0";
 
   private static final Object INSTALL_LOCK = new Object();
-  private static final MonicaAndroid DISABLED = new MonicaAndroid(null, null, null, null);
+  private static final MonicaAndroid DISABLED = new MonicaAndroid(null, null, null, null, false);
   private static volatile MonicaAndroid current = DISABLED;
 
   /** {@code null} only on the disabled instance. */
@@ -46,16 +46,18 @@ public final class MonicaAndroid implements AutoCloseable {
   private final AndroidPlatform platform;
   private final Duration closeTimeout;
   private final UncaughtExceptionCapture uncaughtExceptionCapture;
+  private final boolean trackScreens;
   private final Scope detachedScope = new Scope();
   private volatile AutoCloseable screenTracking;
   private volatile boolean closed;
 
   private MonicaAndroid(MonicaClient client, AndroidPlatform platform, Duration closeTimeout,
-      UncaughtExceptionCapture uncaughtExceptionCapture) {
+      UncaughtExceptionCapture uncaughtExceptionCapture, boolean trackScreens) {
     this.client = client;
     this.platform = platform;
     this.closeTimeout = closeTimeout;
     this.uncaughtExceptionCapture = uncaughtExceptionCapture;
+    this.trackScreens = trackScreens;
   }
 
   /**
@@ -139,14 +141,17 @@ public final class MonicaAndroid implements AutoCloseable {
         capture = new UncaughtExceptionCapture(client,
             Thread.getDefaultUncaughtExceptionHandler(), options.shutdownTimeout());
       }
-      MonicaAndroid installed = new MonicaAndroid(client, platform, options.flushTimeout(), capture);
-      if (options.trackScreens()) {
-        try {
-          installed.screenTracking = platform.trackScreens(installed::onScreen);
-        } catch (Throwable failure) {
-          // Screen breadcrumbs are a nicety. Losing them must not cost the crash handler.
-          warn(platform, "Activity transitions are not tracked", failure);
-        }
+      MonicaAndroid installed = new MonicaAndroid(client, platform, options.flushTimeout(), capture,
+          options.trackScreens());
+      // Registered even without trackScreens: the foreground and background switch the
+      // presence heartbeat, and that is not a breadcrumb setting.
+      try {
+        installed.screenTracking = platform.trackScreens(installed::onScreen);
+      } catch (Throwable failure) {
+        // Breadcrumbs and the foreground check are niceties; losing them must not cost the
+        // crash handler. With no foreground to wait for, the heartbeat starts now.
+        warn(platform, "Activity transitions are not tracked", failure);
+        client.checkPresence();
       }
       // The one step with a global side effect goes last, so nothing after it can fail
       // and leave a handler installed that no instance owns.
@@ -335,6 +340,18 @@ public final class MonicaAndroid implements AutoCloseable {
   private void onScreen(String lifecycle, String screen) {
     try {
       if (closed || client == null) return;
+      // Android 15+ cuts a background app off the network, so a heartbeat tried there would
+      // fail and still use up the interval. The client is built suspended; checkPresence()
+      // lifts that on the sender thread.
+      if ("background".equals(lifecycle)) {
+        client.setPresenceSuspended(true);
+        return;
+      }
+      if ("foreground".equals(lifecycle)) {
+        client.checkPresence();
+        return;
+      }
+      if (!trackScreens) return;
       client.globalScope().addBreadcrumb("ui.lifecycle", screen + "." + lifecycle);
       if ("resumed".equals(lifecycle)) setScreen(screen);
     } catch (Throwable failure) {
@@ -396,6 +413,10 @@ public final class MonicaAndroid implements AutoCloseable {
         .batchSize(options.batchSize())
         .flushInterval(options.flushInterval())
         .flushTimeout(options.flushTimeout())
+        .presenceStore(platform.presenceStore())
+        // install() runs before any Activity starts: the first return to the foreground
+        // sends the start, not the process start in the background.
+        .presenceSuspended(true)
         .transport(transport);
     String release = options.release() != null ? options.release()
         : environment == null ? null : environment.versionName();

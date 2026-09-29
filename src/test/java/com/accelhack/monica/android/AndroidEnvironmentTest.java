@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 class AndroidEnvironmentTest {
   private static Map<String, Object> contextsFor(AndroidEnvironment environment) {
     RecordingTransport transport = new RecordingTransport();
-    try (MonicaClient client = MonicaClient.builder()
+    try (MonicaClient client = MonicaClient.builder().presenceStore(FakePlatform.alreadyReported())
         .environment("test")
         .transport(transport)
         .build()) {
