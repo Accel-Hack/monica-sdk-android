@@ -35,7 +35,7 @@ import java.util.Map;
  */
 public final class MonicaAndroid implements AutoCloseable {
   static final String SDK_NAME = "com.accelhack.monica:monica-android";
-  static final String SDK_VERSION = "0.1.0";
+  static final String SDK_VERSION = "0.2.0";
 
   private static final Object INSTALL_LOCK = new Object();
   private static final MonicaAndroid DISABLED = new MonicaAndroid(null, null, null, null, false);

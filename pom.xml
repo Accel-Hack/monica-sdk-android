@@ -11,7 +11,7 @@
   -->
   <groupId>com.accelhack.monica</groupId>
   <artifactId>monica-android</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.2.0-SNAPSHOT</version>
   <packaging>jar</packaging>
   <name>MONICA Android</name>
   <description>Android integration for the MONICA Java SDK</description>
@@ -68,11 +68,11 @@
       version any more: monica-core is released from Accel-Hack/monica-sdk-java to that
       repository's GitHub Packages registry (see <repositories> below), so a fix there has
       to be published before it can be verified here.
-      0.2.0-SNAPSHOT is provisional: it carries the presence store and SendResult.accepted,
-      which are not released yet. Replace it with the published version once core is
-      released.
+      0.3.0 carries the presence store and SendResult.accepted. CI resolves it only once
+      monica-core 0.3.0 is published; until then build locally against an installed
+      snapshot with -Dmonica-core.version=0.3.0-SNAPSHOT.
     -->
-    <monica-core.version>0.2.0-SNAPSHOT</monica-core.version>
+    <monica-core.version>0.3.0</monica-core.version>
     <junit.version>5.9.3</junit.version>
     <!--
       Compile-only Android framework stubs. Every method throws at runtime, so the real
