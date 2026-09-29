@@ -27,8 +27,9 @@ public interface AndroidPlatform {
 
   /**
    * Starts reporting Activity transitions, the return to the foreground as
-   * {@code foreground} and the lack of a started Activity as {@code background}. A platform
-   * that reports neither leaves the presence heartbeat running as a server's would.
+   * {@code foreground} and the lack of a started Activity as {@code background}. The presence
+   * heartbeat waits for the first {@code foreground}; a platform that cannot report it throws,
+   * and the heartbeat then starts at install.
    *
    * @return a handle that stops the reporting, never {@code null}
    */

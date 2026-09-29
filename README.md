@@ -196,7 +196,9 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
   - アプリのフォアグラウンド復帰（`trigger: "start"`）。started な Activity が 0 から 1 に
     なったときで、画面回転などの構成変更は数えない。`trackScreens` が `false` でも見る。
     起動直後の判定もここで行うので、プロセスがバックグラウンドで起動した場合は
-    フォアグラウンドに出るまで送らない
+    フォアグラウンドに出るまで送らない。`install()` は Activity が started になる前
+    （`Application#onCreate`）に呼ぶ。`Context` から `Application` が取れず Activity を
+    追えない場合だけ、`install()` 時に判定する
   - フォアグラウンド中の `flushInterval` ごとの送信 tick（`trigger: "interval"`）。
     フォアグラウンドに出しっぱなしでも間隔（既定 1 日）ごとに送る。送信待ちの event が
     あるときは送らない

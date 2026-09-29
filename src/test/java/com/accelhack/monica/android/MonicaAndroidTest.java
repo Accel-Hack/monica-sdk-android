@@ -539,10 +539,11 @@ class MonicaAndroidTest {
   private static final long TWO_DAYS = 2 * 86_400_000L;
 
   @Test
-  void aFreshInstallSendsAStartReportAloneInItsEnvelope() {
+  void aFreshInstallSendsAStartReportAloneInItsEnvelopeOnTheFirstForeground() {
     RecordingTransport transport = new RecordingTransport();
-    MonicaAndroid monica = MonicaAndroid.install(new FakePlatform().neverReported(),
-        options(transport).build());
+    FakePlatform platform = new FakePlatform().neverReported();
+    MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
     monica.captureMessage("boom");
     assertTrue(monica.flush(Duration.ofSeconds(1)));
 
@@ -562,9 +563,32 @@ class MonicaAndroidTest {
     FakePlatform platform = new FakePlatform().neverReported();
     platform.presence().setLastReportedAt(System.currentTimeMillis() - 3_600_000L);
     MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
     assertTrue(monica.flush(Duration.ofSeconds(1)));
 
     assertTrue(transport.envelopes().isEmpty());
+  }
+
+  @Test
+  void nothingIsSentBeforeTheFirstForegroundEvenWhenTicksRun() throws Exception {
+    RecordingTransport transport = new RecordingTransport();
+    FakePlatform platform = new FakePlatform().neverReported();
+    MonicaAndroid.install(platform,
+        options(transport).flushInterval(Duration.ofMillis(20)).build());
+    Thread.sleep(200);
+
+    assertTrue(transport.envelopes().isEmpty(), "a process started in the background waits");
+    assertNull(platform.presence().getLastReportedAt());
+  }
+
+  @Test
+  void withoutLifecycleTrackingTheStartGoesOutAtInstall() {
+    RecordingTransport transport = new RecordingTransport();
+    MonicaAndroid monica = MonicaAndroid.install(new FakePlatform().neverReported().failTracking(),
+        options(transport).build());
+    assertTrue(monica.flush(Duration.ofSeconds(1)));
+
+    assertEquals("start", transport.only().get("trigger"));
   }
 
   @Test
@@ -602,10 +626,11 @@ class MonicaAndroidTest {
     assertTrue(transport.envelopes().isEmpty(), "no heartbeat while the network is cut off");
     assertEquals(due, platform.presence().getLastReportedAt());
 
-    // A tick can win the race with checkPresence() and send it as interval: one either way.
     platform.emit("foreground", "MainActivity");
     Thread.sleep(200);
     assertEquals(1, transport.clientReports().size());
+    assertEquals("start", transport.clientReports().get(0).get("trigger"),
+        "checkPresence() lifts the suspension itself, so no tick sends it as interval");
 
     platform.emit("background", "unknown");
     platform.presence().setLastReportedAt(System.currentTimeMillis() - TWO_DAYS);
@@ -615,6 +640,7 @@ class MonicaAndroidTest {
     platform.emit("foreground", "MainActivity");
     Thread.sleep(200);
     assertEquals(2, transport.clientReports().size());
+    assertEquals("start", transport.clientReports().get(1).get("trigger"));
   }
 
   @Test
@@ -636,6 +662,7 @@ class MonicaAndroidTest {
     RecordingTransport transport = new RecordingTransport().presenceHeaders("3600000", "0.5");
     FakePlatform platform = new FakePlatform().neverReported();
     MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
     assertTrue(monica.flush(Duration.ofSeconds(1)));
 
     assertEquals(3_600_000L, platform.presence().getIntervalMillis());
@@ -657,6 +684,7 @@ class MonicaAndroidTest {
     platform.presence().setIntervalMillis(60_000L);
     platform.presence().setLastReportedAt(System.currentTimeMillis() - 120_000L);
     MonicaAndroid monica = MonicaAndroid.install(platform, options(transport).build());
+    platform.emit("foreground", "MainActivity");
     assertTrue(monica.flush(Duration.ofSeconds(1)));
 
     assertEquals("start", transport.only().get("trigger"), "two minutes is past a one-minute interval");

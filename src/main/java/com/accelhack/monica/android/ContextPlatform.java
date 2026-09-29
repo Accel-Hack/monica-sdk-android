@@ -58,15 +58,12 @@ final class ContextPlatform implements AndroidPlatform {
     if (listener == null) return () -> { };
     if (application == null) {
       // ActivityLifecycleCallbacks live on the Application. Without one there is nothing
-      // to register on, and the integrator should learn that instead of guessing.
-      warn("the Context has no Application, so Activity transitions and returns to the"
-          + " foreground are not tracked", null);
-      return () -> { };
+      // to register on; MonicaAndroid warns and lets the heartbeat run without the foreground.
+      throw new IllegalStateException("the Context has no Application, so Activity"
+          + " transitions and returns to the foreground are not tracked");
     }
-    LifecycleCallbacks callbacks = new LifecycleCallbacks(listener);
+    Application.ActivityLifecycleCallbacks callbacks = new LifecycleCallbacks(listener);
     application.registerActivityLifecycleCallbacks(callbacks);
-    // install() runs in Application#onCreate, before any Activity has started.
-    callbacks.report("background", null);
     return () -> application.unregisterActivityLifecycleCallbacks(callbacks);
   }
 
@@ -201,7 +198,7 @@ final class ContextPlatform implements AndroidPlatform {
       report("destroyed", activity);
     }
 
-    void report(String lifecycle, Activity activity) {
+    private void report(String lifecycle, Activity activity) {
       try {
         listener.onScreen(lifecycle, activity == null ? "unknown"
             : activity.getClass().getSimpleName());

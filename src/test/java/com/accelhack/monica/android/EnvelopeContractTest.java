@@ -376,6 +376,8 @@ class EnvelopeContractTest {
             .captureUncaughtExceptions(false)
             .trackScreens(false)
             .build());
+    // The client is built suspended; the first return to the foreground sends the start.
+    platform.emit("foreground", "MainActivity");
     try {
       assertTrue(monica.flush(Duration.ofSeconds(2)));
     } finally {

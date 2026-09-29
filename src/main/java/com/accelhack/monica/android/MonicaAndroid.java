@@ -149,8 +149,9 @@ public final class MonicaAndroid implements AutoCloseable {
         installed.screenTracking = platform.trackScreens(installed::onScreen);
       } catch (Throwable failure) {
         // Breadcrumbs and the foreground check are niceties; losing them must not cost the
-        // crash handler. The start heartbeat at install still goes out.
+        // crash handler. With no foreground to wait for, the heartbeat starts now.
         warn(platform, "Activity transitions are not tracked", failure);
+        client.checkPresence();
       }
       // The one step with a global side effect goes last, so nothing after it can fail
       // and leave a handler installed that no instance owns.
@@ -340,13 +341,13 @@ public final class MonicaAndroid implements AutoCloseable {
     try {
       if (closed || client == null) return;
       // Android 15+ cuts a background app off the network, so a heartbeat tried there would
-      // fail and still use up the interval. The platform reports the background at install.
+      // fail and still use up the interval. The client is built suspended; checkPresence()
+      // lifts that on the sender thread.
       if ("background".equals(lifecycle)) {
         client.setPresenceSuspended(true);
         return;
       }
       if ("foreground".equals(lifecycle)) {
-        client.setPresenceSuspended(false);
         client.checkPresence();
         return;
       }
@@ -413,6 +414,9 @@ public final class MonicaAndroid implements AutoCloseable {
         .flushInterval(options.flushInterval())
         .flushTimeout(options.flushTimeout())
         .presenceStore(platform.presenceStore())
+        // install() runs before any Activity starts: the first return to the foreground
+        // sends the start, not the process start in the background.
+        .presenceSuspended(true)
         .transport(transport);
     String release = options.release() != null ? options.release()
         : environment == null ? null : environment.versionName();
