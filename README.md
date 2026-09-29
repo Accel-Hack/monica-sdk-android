@@ -184,21 +184,39 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 
 ## 稼働確認
 
-`install()` 時と、アプリがフォアグラウンドに戻ったときに、稼働確認の `client_report`
-（`trigger: "start"`）を単独の envelope で送る。送るのは直近 1 日に `202` を受けた
-envelope が無いときだけで、プロセスを再起動しても間隔内なら送らない。設定項目は無く、
-間隔と間引き率は MONICA 側の project 設定で変わる。`trackScreens` が `false` でも
-フォアグラウンド復帰は見る。プロセスが生きている間は、既存の送信 tick で 1 日 1 回
-`trigger: "interval"` も送るので、フォアグラウンドに出しっぱなしでも沈黙にならない。
+アプリが動いていることを MONICA に知らせるため、稼働確認の `client_report` item を
+1 件だけ載せた envelope を送る。endpoint・認証・再試行は error の送信と同じで、SDK 側に
+設定項目は無い。
 
-前回 `202` を受けた時刻と MONICA から届いた設定は、SharedPreferences
-`com.accelhack.monica.presence` の次のキーに持つ。
+- **送る条件**: 直近の間隔（既定 1 日）に `202` を受けた envelope が無いときだけ送る。
+  error の envelope が `202` を受けても期限は延びる。1 回送ったら、成否によらず次は
+  1 間隔後まで送らない
+- **判定する時点**:
+  - `install()` 時（`trigger: "start"`）
+  - アプリのフォアグラウンド復帰（`trigger: "start"`）。started な Activity が 0 から 1 に
+    なったときで、画面回転などの構成変更は数えない。`trackScreens` が `false` でも見る
+  - `flushInterval` ごとの送信 tick（`trigger: "interval"`）。プロセスが生きている間は
+    バックグラウンドでも見る。送信待ちの event があるときは送らない
+  - `close()` やプロセス終了のときには送らない
+- **状態の置き場所**: SharedPreferences `com.accelhack.monica.presence` に次のキーで持つ。
+  書き込みは `apply()` なので、プロセスが kill された直後の分は失われることがある（次の
+  `install()` で 1 通余分に送るだけ）。プロセスを再起動しても間隔内なら送らない
 
-| キー | 型 | 内容 |
-| --- | --- | --- |
-| `last_reported_at` | `long` | 前回 `202` を受けた（または稼働確認を送った）時刻、epoch ミリ秒 |
-| `interval_ms` | `long` | `X-Monica-Presence-Interval-Ms` で届いた間隔 |
-| `sample_rate` | `String` | `X-Monica-Presence-Sample-Rate` で届いた間引き率 |
+  | キー | 型 | 内容 |
+  | --- | --- | --- |
+  | `last_reported_at` | `long` | 前回 `202` を受けた（または稼働確認を送った）時刻、epoch ミリ秒 |
+  | `interval_ms` | `long` | `X-Monica-Presence-Interval-Ms` で届いた間隔 |
+  | `sample_rate` | `String` | `X-Monica-Presence-Sample-Rate` で届いた間引き率 |
+
+- **MONICA 側の設定**: `202` の応答 header `X-Monica-Presence-Interval-Ms`（間隔）と
+  `X-Monica-Presence-Sample-Rate`（間引き率）を上の表に保存し、次の判定から使う。
+  header が無い・値が不正なときは既定値（1 日 / 間引かない）のまま。間引き率は端末ごとに
+  効き、外れた端末はその間隔の稼働確認を送らない
+- **`401` の後**: 送信を止めるので、稼働確認も送らない
+- **`transport` を差し替えた場合**: `deliver()` で `SendResult.accepted(...)` に header を
+  載せない transport では、MONICA 側の設定は届かず既定値で動く
+- **Auto Backup（任意）**: 別端末への復元で前回時刻を持ち越したくない場合は、
+  `com.accelhack.monica.presence.xml` を backup rules の `sharedpref` から除外する
 
 `ANDROID_ID`、serial、IMEI、広告 ID、アカウント、位置情報、実ファイルパスは一切読まず、
 パーミッションを要求する API も呼ばない。個人に関する値は `setUser()` と `beforeSend`
