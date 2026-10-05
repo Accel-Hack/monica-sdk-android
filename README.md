@@ -183,6 +183,27 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
 
 未捕捉例外には、クラッシュしたスレッド名が `thread` tag に付く。
 
+## Issue のまとめ方
+
+どのエラーを同じ Issue にまとめるかは MONICA 側で決まり、SDK は決めない。規則は
+[`spec/v1/grouping.md`](spec/v1/grouping.md) にある。分かれ方が意外なときは、管理画面の
+Issue 詳細の「まとめ方」で、その Issue がどの値でまとめられたかを確かめる。
+
+この SDK に固有の点は次のとおり。
+
+- frame の関数名は `完全修飾クラス名.メソッド名` で送る。lambda や匿名クラスの連番は
+  MONICA が無視する
+- `in_app: true` になるのは、`inAppPackage` に前方一致した class の frame だけ。既定はアプリの
+  package 名（`Context#getPackageName()`）なので、`applicationIdSuffix` などでコードの package と
+  違うときは `inAppPackage` を明示する
+- 難読化するアプリは [制約](#制約) の `-keepnames` を足す。無いとクラス名とメソッド名が
+  難読化後の名前になり、build が変わると同じクラッシュが別の Issue になる
+- 難読化したビルドでは frame の filename がクラス名から導出した `MainActivity.java` になるが、
+  MONICA は `MainActivity.kt` と同じに扱う。Kotlin の top-level 関数だけは `Utils.kt` と
+  `UtilsKt.java` で別の Issue になる
+- `fingerprint` を渡す専用の API は無い。`beforeSend` で `event.put("fingerprint", Arrays.asList(...))`
+  とする。`fingerprint` は既定の分け方を置き換えるので、どこで起きたかの区別も値に含める
+
 ## 稼働確認
 
 アプリが動いていることを MONICA に知らせるため、稼働確認の `client_report` item を
@@ -249,9 +270,6 @@ if (BuildConfig.DEBUG && !options.problems().isEmpty()) {
   ```
   -keepnames class com.example.app.** { *; }   # inAppPackage() に渡す package と一致させる
   ```
-- 難読化したビルドでは、frame の filename は残っているクラス名から導出した
-  `MainActivity.java` になる。Kotlin のアプリでは、難読化していないビルドの
-  `MainActivity.kt` と grouping が分かれる
 - **ディスクへの永続キューは持たない。** 未送信の event はプロセスが終わると失われる。
   クラッシュ時は `shutdownTimeout` まで送信を待ってから元の handler へ委譲するので、
   この値を短くすると取りこぼしやすくなる
